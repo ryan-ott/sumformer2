@@ -60,6 +60,7 @@ cover/
 *.log
 # Wandb logging
 wandb/
+models/
 
 local_settings.py
 db.sqlite3

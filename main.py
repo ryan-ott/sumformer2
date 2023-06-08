@@ -65,6 +65,8 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
 
     if sample is not None:
         train_dataset = train_dataset.select(range(sample))
+        val_dataset = val_dataset.select(range(sample))
+        test_dataset = test_dataset.select(range(sample))
     train_loader = DataLoader(train_dataset, batch_size, collate_fn=collate_fn)
     val_loader = DataLoader(val_dataset, batch_size, collate_fn=collate_fn)
     test_loader = DataLoader(test_dataset, batch_size, collate_fn=collate_fn)
@@ -82,16 +84,19 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
     elif sched == "invsqrt":
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1/math.sqrt(epoch) if epoch > 0 else 1)
     elif sched == "linear":
-        scheduler = lr_scheduler.LinearLR(optimizer, start_factor=lr/10, end_factor=lr, total_iters=len(train_loader)*epochs)
+        scheduler = lr_scheduler.LinearLR(optimizer, start_factor=lr/5, end_factor=lr, total_iters=len(train_loader)*epochs)
     elif sched == "onecycle":
         scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear")
     else:
         raise ValueError("Invalid scheduler option provided.")
+    
+    # Init best loss
+    best_val_loss = float("inf")
 
-    # Training loop
-    model.train()
     for epoch in range(epochs):
         # torch.autograd.set_detect_anomaly(True)  # ! REMOVE WHEN NOT NEEDED
+        # -----TRAINING-----
+        model.train()
 
         print(f"Epoch {epoch+1}")
         for b_idx, (encoder_inputs, decoder_inputs) in enumerate(train_loader):
@@ -129,18 +134,43 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
 
             # log and update the learning rate
             scheduler.step()
-            wandb.log({"lr": optimizer.param_groups[0]['lr']})
+            wandb.log({"lr": scheduler.get_last_lr()[0]})
 
-            # log the loss value to wandb and print every 20 batches
+            # log the loss value to wandb and print every 100 batches
             if b_idx % 100 == 0:
-                print(f"Batch {b_idx+1} - Loss: {loss.item()}")
-            wandb.log({"loss": loss.item()})
+                print(f"Batch {b_idx+1} - Train loss: {loss.item()}")
+            wandb.log({"train_loss": loss.item()})
+        
+        # -----VALIDATION-----
+        model.eval()
+        total_val_loss = 0.0
+        with torch.no_grad():
+            for b_idx, (encoder_inputs, decoder_inputs) in enumerate(val_loader):
+                # forward pass
+                outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"], source_mask=encoder_inputs["padding_mask"])
 
-    # Save the trained model
-    if not os.path.exists("models"):
-            os.mkdir("models")
-    torch.save(model.state_dict(), f"models/model_{wandb.run.name}_{epoch+1}.pt")  # TODO: only save the model with best loss
-    wandb.save(f"models/model_{epoch+1}.pt")
+                # shift the decoder inputs to the right by 1 (for teacher forcing technique)
+                shifted_outputs = outputs[:, :-1, :].contiguous()
+                shifted_labels = decoder_inputs["input_ids"][:, 1:].contiguous()
+
+                # compute the loss
+                loss = criterion(shifted_outputs.view(-1, shifted_outputs.size(-1)), shifted_labels.view(-1))
+                # loss = ((~decoder_inputs["attention_mask"].to(torch.float)) * loss).mean()
+                total_val_loss += loss.item()
+        
+        # log the validation loss to wandb
+        avg_val_loss = total_val_loss / len(val_loader)
+        wandb.log({"val_loss": avg_val_loss})
+        print(f"Epoch {epoch+1} validation loss: {avg_val_loss}")
+
+    # Save the trained model if it has best val loss
+    if avg_val_loss < best_val_loss:
+        print("Saving model...")
+        best_val_loss = avg_val_loss
+        if not os.path.exists(f"models/{wandb.run.name}"):
+            os.mkdir(f"models/{wandb.run.name}")
+        torch.save(model.state_dict(), f"models/{wandb.run.name}/model_{wandb.run.name}_e{epoch}.pt")
+        wandb.save(f"models/{wandb.run.name}/model_{wandb.run.name}_e{epoch}.pt")
 
 
 if __name__ == '__main__':
