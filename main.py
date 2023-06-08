@@ -15,7 +15,7 @@ from transformer import Sumformer
 from utils import load_reddit
 
 
-def main(epochs=1, batch_size=16, lr=1e-4, sched="onecycle", emb_dim=512, max_len=512, enc_heads=1, enc_hidden=1, enc_depth=1, enc_dropout=0.1, dec_heads=1, dec_hidden=1, dec_depth=1, dec_dropout=0.1, sample=None):
+def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_len=512, enc_heads=1, enc_hidden=1, enc_depth=1, enc_dropout=0.1, dec_heads=1, dec_hidden=1, dec_depth=1, dec_dropout=0.1, sample=None):
     # Ensure deterministic behavior
     torch.backends.cudnn.deterministic = True
     random.seed(69420)
@@ -76,7 +76,7 @@ def main(epochs=1, batch_size=16, lr=1e-4, sched="onecycle", emb_dim=512, max_le
     criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction='mean')  # * see without padding mask in decoder
     lr_schedules = {
         "linear": lr_scheduler.LinearLR(optimizer, start_factor=lr/10, end_factor=lr, total_iters=len(train_loader)*epochs),
-        "constant": lr_scheduler.ConstantLR(optimizer),
+        "constant": lr_scheduler.ConstantLR(optimizer, factor=1, total_iters=0),  # an actual constant learning rate
         "onecycle": lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear"),
         "invsqrt": lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1/math.sqrt(epoch) if epoch > 0 else 1),
         "cosinedecay": lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader) * epochs)}
