@@ -107,14 +107,22 @@ def main(epochs=1, batch_size=16, lr=1e-4, sched="onecycle", emb_dim=512, max_le
             # backpropagate the loss
             loss.backward()
 
+            # gradient_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0) TODO: look into this
+            grad_norm = 0.0
+            for param in model.parameters():
+                grad_norm += param.grad.data.norm(2).item() ** 2
+            grad_norm = grad_norm ** 0.5
+            wandb.log({"Gradient L2 norm": grad_norm})
+
             # update the weights
             optimizer.step()
 
-            # update the learning rate
+            # log and update the learning rate
             scheduler.step()
+            wandb.log({"lr": scheduler.get_last_lr()[0]})
 
             # log the loss value to wandb and print every 20 batches
-            if b_idx % 20 == 0:
+            if b_idx % 100 == 0:
                 print(f"Batch {b_idx+1} - Loss: {loss.item()}")
             wandb.log({"loss": loss.item()})
 
