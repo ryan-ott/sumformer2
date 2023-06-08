@@ -1,4 +1,5 @@
 import itertools
+import math
 import random
 import fire
 import numpy as np
@@ -6,7 +7,7 @@ import os
 import torch
 import wandb
 
-from torch.optim import AdamW
+from torch.optim import AdamW, lr_scheduler
 from torch.utils.data import DataLoader
 from transformers import T5Tokenizer
 
@@ -14,7 +15,7 @@ from transformer import Sumformer
 from utils import load_reddit
 
 
-def main(epochs=1, batch_size=16, lr=1e-4, emb_dim=512, max_len=512, enc_heads=1, enc_hidden=1, enc_depth=1, enc_dropout=0.1, dec_heads=1, dec_hidden=1, dec_depth=1, dec_dropout=0.1, sample=None):
+def main(epochs=1, batch_size=16, lr=1e-4, sched="onecycle", emb_dim=512, max_len=512, enc_heads=1, enc_hidden=1, enc_depth=1, enc_dropout=0.1, dec_heads=1, dec_hidden=1, dec_depth=1, dec_dropout=0.1, sample=None):
     # Ensure deterministic behavior
     torch.backends.cudnn.deterministic = True
     random.seed(69420)
@@ -24,12 +25,6 @@ def main(epochs=1, batch_size=16, lr=1e-4, emb_dim=512, max_len=512, enc_heads=1
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device "{device}"')
-
-    # Saving the best model
-    if not os.path.exists("models"):
-        os.mkdir("models")
-    best_model = None
-    best_loss = float('inf')
 
     # Initialize wandb
     wandb.init(project="Sumformer", entity="ryanott", config={
@@ -45,7 +40,8 @@ def main(epochs=1, batch_size=16, lr=1e-4, emb_dim=512, max_len=512, enc_heads=1
         "dec_heads": dec_heads,
         "dec_hidden": dec_hidden,
         "dec_depth": dec_depth,
-        "dec_dropout": dec_dropout
+        "dec_dropout": dec_dropout,
+        "schedule": sched
     })
 
     # Load dataset and prepare DataLoader
@@ -78,6 +74,13 @@ def main(epochs=1, batch_size=16, lr=1e-4, emb_dim=512, max_len=512, enc_heads=1
     model = model.to(device)
     optimizer = AdamW(model.parameters(), lr)
     criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction='mean')  # * see without padding mask in decoder
+    lr_schedules = {
+        "linear": lr_scheduler.LinearLR(optimizer, start_factor=lr/10, end_factor=lr, total_iters=len(train_loader)*epochs),
+        "constant": lr_scheduler.ConstantLR(optimizer),
+        "onecycle": lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear"),
+        "invsqrt": lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1/math.sqrt(epoch) if epoch > 0 else 1),
+        "cosinedecay": lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader) * epochs)}
+    scheduler = lr_schedules[sched]
 
     # Training loop
     model.train()
@@ -106,6 +109,9 @@ def main(epochs=1, batch_size=16, lr=1e-4, emb_dim=512, max_len=512, enc_heads=1
 
             # update the weights
             optimizer.step()
+
+            # update the learning rate
+            scheduler.step()
 
             # log the loss value to wandb and print every 20 batches
             if b_idx % 20 == 0:

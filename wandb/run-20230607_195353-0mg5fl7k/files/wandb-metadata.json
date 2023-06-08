@@ -1,0 +1,45 @@
+{
+    "os": "macOS-13.4-x86_64-i386-64bit",
+    "python": "3.11.2",
+    "heartbeatAt": "2023-06-07T17:53:54.331098",
+    "startedAt": "2023-06-07T17:53:53.834119",
+    "docker": null,
+    "cuda": null,
+    "args": [
+        "--epochs=1",
+        "--lr=1e-3"
+    ],
+    "state": "running",
+    "program": "/Users/ryan/Developer/sumformer2/main.py",
+    "codePath": "main.py",
+    "git": {
+        "remote": "https://github.com/Ryan-Ott/sumformer2.git",
+        "commit": "799a35086e6217d759e5cf3b4bd88ceec39b0fc3"
+    },
+    "email": "ott.r21@gmail.com",
+    "root": "/Users/ryan/Developer/sumformer2",
+    "host": "Ryans-MacBook-Pro.local",
+    "username": "ryan",
+    "executable": "/Users/ryan/Developer/sumformer2/.venv/bin/python",
+    "cpu_count": 6,
+    "cpu_count_logical": 12,
+    "cpu_freq": {
+        "current": 2200,
+        "min": 2200,
+        "max": 2200
+    },
+    "cpu_freq_per_core": [
+        {
+            "current": 2200,
+            "min": 2200,
+            "max": 2200
+        }
+    ],
+    "disk": {
+        "total": 261.7021255493164,
+        "used": 8.440177917480469
+    },
+    "memory": {
+        "total": 16.0
+    }
+}

@@ -1,0 +1,66 @@
+wandb_version: 1
+
+epochs:
+  desc: null
+  value: 1
+batch_size:
+  desc: null
+  value: 16
+lr:
+  desc: null
+  value: 0.001
+emb_dim:
+  desc: null
+  value: 512
+max_len:
+  desc: null
+  value: 512
+enc_heads:
+  desc: null
+  value: 1
+enc_hidden:
+  desc: null
+  value: 1
+enc_depth:
+  desc: null
+  value: 1
+enc_dropout:
+  desc: null
+  value: 0.1
+dec_heads:
+  desc: null
+  value: 1
+dec_hidden:
+  desc: null
+  value: 1
+dec_depth:
+  desc: null
+  value: 1
+dec_dropout:
+  desc: null
+  value: 0.1
+_wandb:
+  desc: null
+  value:
+    python_version: 3.11.2
+    cli_version: 0.15.4
+    framework: huggingface
+    huggingface_version: 4.29.2
+    is_jupyter_run: false
+    is_kaggle_kernel: false
+    start_time: 1686160433.853248
+    t:
+      1:
+      - 1
+      - 11
+      - 49
+      - 51
+      - 55
+      3:
+      - 16
+      - 23
+      4: 3.11.2
+      5: 0.15.4
+      6: 4.29.2
+      8:
+      - 5
