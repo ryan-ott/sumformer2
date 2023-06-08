@@ -74,13 +74,19 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
     model = model.to(device)
     optimizer = AdamW(model.parameters(), lr)
     criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction='mean')  # * see without padding mask in decoder
-    lr_schedules = {
-        "linear": lr_scheduler.LinearLR(optimizer, start_factor=lr/10, end_factor=lr, total_iters=len(train_loader)*epochs),
-        "onecycle": lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear"),
-        "invsqrt": lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1/math.sqrt(epoch) if epoch > 0 else 1),
-        "cosinedecay": lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader) * epochs),
-        "none": lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1)}
-    scheduler = lr_schedules[sched]
+
+    if sched == "constant" or sched == "none":
+        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1)
+    elif sched == "cosinedecay":
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader) * epochs)
+    elif sched == "invsqrt":
+        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1/math.sqrt(epoch) if epoch > 0 else 1)
+    elif sched == "linear":
+        scheduler = lr_scheduler.LinearLR(optimizer, start_factor=lr/10, end_factor=lr, total_iters=len(train_loader)*epochs)
+    elif sched == "onecycle":
+        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear")
+    else:
+        raise ValueError("Invalid scheduler option provided.")
 
     # Training loop
     model.train()
