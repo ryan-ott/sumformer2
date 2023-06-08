@@ -107,7 +107,7 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
             # backpropagate the loss
             loss.backward()
 
-            # clip the gradients
+            # clip the gradients if set
             if clip is not None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
             
@@ -123,7 +123,7 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
 
             # log and update the learning rate
             scheduler.step()
-            wandb.log({"lr": scheduler.get_last_lr()[0]})
+            wandb.log({"lr": optimizer.param_groups[0]['lr']})
 
             # log the loss value to wandb and print every 20 batches
             if b_idx % 100 == 0:
