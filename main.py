@@ -131,7 +131,7 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
             optimizer.zero_grad()
 
             # forward pass  # ! NO SOURCE MASK IS BEING PASSED RIGHT NOW
-            outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"], source_mask=encoder_inputs["padding_mask"])
+            outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"])#, source_mask=encoder_inputs["padding_mask"])
 
             # shift the decoder inputs to the right by 1 (for teacher forcing technique)
             shifted_outputs = outputs[:, :-1, :].contiguous()
@@ -173,7 +173,7 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
         with torch.no_grad():
             for b_idx, (encoder_inputs, decoder_inputs) in enumerate(val_loader):
                 # forward pass
-                outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"], source_mask=encoder_inputs["padding_mask"])
+                outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"])#, source_mask=encoder_inputs["padding_mask"])
 
                 # shift the decoder inputs to the right by 1 (for teacher forcing technique)
                 shifted_outputs = outputs[:, :-1, :].contiguous()
