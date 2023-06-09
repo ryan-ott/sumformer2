@@ -21,7 +21,7 @@ class Sumformer(nn.Module):
         self.toProbs = nn.Linear(emb_dim, vocab_size).to(device)  # convert to probabilities over vocab
 
 
-    def forward(self, source, target, source_mask, target_mask=None):
+    def forward(self, source, target, source_mask=None, target_mask=None):
         tokens_source = self.token_embedding(source.to(self.device))
         tokens_target = self.token_embedding(target.to(self.device))
 

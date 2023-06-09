@@ -13,6 +13,14 @@ from transformers import T5Tokenizer
 from transformer import Sumformer
 from utils import load_reddit
 
+from torch.utils.data import DataLoader, Dataset, Sampler, SequentialSampler, BatchSampler
+
+
+def create_data_loader(dataset, batch_size, collate_fn):
+    sampler = SequentialSampler(dataset)
+    batch_sampler = BatchSampler(sampler, batch_size, drop_last=False)
+    return DataLoader(dataset, batch_sampler=batch_sampler, collate_fn=collate_fn)
+
 
 def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_len=512, clip=None, enc_heads=1, enc_hidden=1, enc_depth=1, enc_dropout=0.1, dec_heads=1, dec_hidden=1, dec_depth=1, dec_dropout=0.1, sample=None):
     # Ensure deterministic behavior
@@ -46,6 +54,7 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
 
     # Load dataset and prepare DataLoader
     train_dataset, val_dataset, test_dataset = load_reddit(0.8, 0.1, min_len=50)
+
     tokenizer = T5Tokenizer.from_pretrained('t5-base', use_fast=True, model_max_length=512)
     PAD_TOKEN_ID = tokenizer.pad_token_id  # 0
     VOCAB_SIZE = len(tokenizer.get_vocab())
@@ -54,8 +63,11 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
         docs = [item['document'] for item in batch]
         summaries = [item['summary'] for item in batch]
 
+        # encode, truncate and pad to the length of the longest sequence in the batch
         encoder_inputs = tokenizer(docs, truncation=True, padding='longest', return_tensors='pt')
         decoder_inputs = tokenizer(summaries, truncation=True, padding='longest', return_tensors='pt')
+
+        # TODO: Pad manually like a real man (cause this doesn't seem to work)
 
         # create attention masks to ignore padding tokens
         encoder_inputs["padding_mask"] = encoder_inputs["input_ids"].ne(PAD_TOKEN_ID)
@@ -67,9 +79,23 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
         train_dataset = train_dataset.select(range(sample))
         val_dataset = val_dataset.select(range(sample))
         test_dataset = test_dataset.select(range(sample))
-    train_loader = DataLoader(train_dataset, batch_size, collate_fn=collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size, collate_fn=collate_fn)
-    test_loader = DataLoader(test_dataset, batch_size, collate_fn=collate_fn)
+
+    train_loader = create_data_loader(train_dataset, batch_size, collate_fn)
+    val_loader = create_data_loader(val_dataset, batch_size, collate_fn)
+    test_loader = create_data_loader(test_dataset, batch_size, collate_fn)
+    
+    # Printing some sample data and padding mask
+    # data_iter = iter(train_loader)
+    # for i in range(3):
+    #     encoder_inputs, decoder_inputs = next(data_iter)
+    #     print(f"Encoder inputs shape: {encoder_inputs['input_ids'].shape}")
+    #     first_doc = encoder_inputs["input_ids"][0]
+    #     print(f"First doc: {first_doc}")
+    #     first_doc_mask = encoder_inputs["padding_mask"][0]
+    #     print(f"First doc mask: {first_doc_mask}")
+    #     first_doc_decoded = tokenizer.decode(first_doc)
+    #     print(f"First doc decoded: {first_doc_decoded}")
+
 
     # Define your model, optimizer and criterion
     model = Sumformer(device, emb_dim, VOCAB_SIZE, max_len, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout)
@@ -104,7 +130,7 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
             # reset the gradients
             optimizer.zero_grad()
 
-            # forward pass
+            # forward pass  # ! NO SOURCE MASK IS BEING PASSED RIGHT NOW
             outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"], source_mask=encoder_inputs["padding_mask"])
 
             # shift the decoder inputs to the right by 1 (for teacher forcing technique)

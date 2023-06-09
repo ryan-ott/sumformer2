@@ -54,16 +54,25 @@ class MHSelfAttention(nn.Module):
             # Create a mask to remove the upper half of the dot matrix, excluding the diagonal
             mask = torch.triu(torch.ones(t, t, device=dot.device), diagonal=1)
             # Set the masked positions to float('-inf') to minimize their impact on the softmax operation
-            mask = mask.masked_fill(mask == 1, float('-inf'))
+            mask = mask.masked_fill(mask == 1, float('-inf'))            
             # Add the mask to the dot product matrix
             dot = dot + mask.unsqueeze(0)
-        
+
+        # print("Dot pre pad mask:", dot.shape, "contains NaNs:", torch.isnan(dot).any(), "\n", dot)
+
         if padding_mask is not None:
-            padding_mask = padding_mask.unsqueeze(1).expand(-1, h, -1)  # padding_mask should now be [batch_size, num_heads, seq_len]
+            padding_mask = padding_mask.unsqueeze(1).expand(-1, h, -1)  # Should be (b, h, t)
+            padding_mask = padding_mask.unsqueeze(-1).expand(-1, -1, -1, t)  # Should be (b, h, t, t)
+            padding_mask = padding_mask.reshape(b * h, t, t)
+            # print("Padding mask:", padding_mask.shape, "\n", padding_mask)
             dot = dot.masked_fill(padding_mask == 0, float('-inf'))
+        
+        # print("Dot post pad mask:", dot.shape, torch.isnan(dot).any(), torch.isinf(dot).any(), "\n", dot)
 
         # row-wise softmax
         dot = F.softmax(dot, dim=2)  # (b * h, t, t)
+
+        # print("Dot post softmax:", dot.shape, torch.isnan(dot).any(), torch.isinf(dot).any(), "\n", dot)
 
         # apply the attention weights to the values
         out = torch.bmm(dot, values).view(b, h, t, s)
@@ -130,7 +139,7 @@ class EncoderBlock(nn.Module):
     def __init__(self, emb, heads, hidden=4, dropout=0.1):
         super().__init__()
 
-        self.attention = MHSelfAttention(emb, heads, mask=True)
+        self.attention = MHSelfAttention(emb, heads, mask=False)
 
         self.norm1 = nn.LayerNorm(emb)
         self.norm2 = nn.LayerNorm(emb)
