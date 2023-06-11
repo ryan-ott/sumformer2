@@ -1,25 +1,17 @@
-import math
 import random
+import time
 import fire
 import numpy as np
 import os
 import torch
 import wandb
 
-from torch.optim import AdamW, lr_scheduler
+from torch.optim import Adam
 from torch.utils.data import DataLoader
 from transformers import T5Tokenizer
 
 from transformer import Sumformer
-from utils import load_reddit
-
-from torch.utils.data import DataLoader, Dataset, Sampler, SequentialSampler, BatchSampler
-
-
-def create_data_loader(dataset, batch_size, collate_fn):
-    sampler = SequentialSampler(dataset)
-    batch_sampler = BatchSampler(sampler, batch_size, drop_last=False)
-    return DataLoader(dataset, batch_sampler=batch_sampler, collate_fn=collate_fn)
+from utils import load_reddit, init_schedule, create_data_loader
 
 
 def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_len=512, clip=None, enc_heads=1, enc_hidden=1, enc_depth=1, enc_dropout=0.1, dec_heads=1, dec_hidden=1, dec_depth=1, dec_dropout=0.1, sample=None):
@@ -29,6 +21,11 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
     np.random.seed(69420)
     torch.manual_seed(69420)
     torch.cuda.manual_seed_all(69420)
+
+    best_val_loss = float("inf")  # Init best loss
+    running_time = 0.0  # Init throughput measurements
+    running_tokens = 0
+    interval = 2  # Init logging interval
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device "{device}"')
@@ -96,28 +93,10 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
     #     first_doc_decoded = tokenizer.decode(first_doc)
     #     print(f"First doc decoded: {first_doc_decoded}")
 
-
-    # Define your model, optimizer and criterion
-    model = Sumformer(device, emb_dim, VOCAB_SIZE, max_len, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout)
-    model = model.to(device)
-    optimizer = AdamW(model.parameters(), lr)
+    model = Sumformer(device, emb_dim, VOCAB_SIZE, max_len, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
+    optimizer = Adam(model.parameters(), lr)
     criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction='mean')  # * see without padding mask in decoder
-
-    if sched == "constant" or sched == "none":
-        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1)
-    elif sched == "cosinedecay":
-        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader) * epochs)
-    elif sched == "invsqrt":
-        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1/math.sqrt(epoch) if epoch > 0 else 1)
-    elif sched == "linear":
-        scheduler = lr_scheduler.LinearLR(optimizer, start_factor=lr/5, end_factor=lr, total_iters=len(train_loader)*epochs)
-    elif sched == "onecycle":
-        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear")
-    else:
-        raise ValueError("Invalid scheduler option provided.")
-    
-    # Init best loss
-    best_val_loss = float("inf")
+    scheduler = init_schedule(epochs, lr, sched, train_loader, optimizer)
 
     for epoch in range(epochs):
         # torch.autograd.set_detect_anomaly(True)  # ! REMOVE WHEN NOT NEEDED
@@ -126,7 +105,8 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
 
         print(f"Epoch {epoch+1}")
         for b_idx, (encoder_inputs, decoder_inputs) in enumerate(train_loader):
-            print(f"Batch: {b_idx+1}")
+            start_time = time.time()
+
             # reset the gradients
             optimizer.zero_grad()
 
@@ -148,6 +128,25 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
             if clip is not None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
             
+            # update the weights
+            optimizer.step()
+
+            # measure throughput
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            num_tokens = encoder_inputs["input_ids"].size(1) * batch_size  # number of tokens in the batch
+            running_time += elapsed_time
+            running_tokens += num_tokens
+
+            if b_idx % interval == 0:
+                wandb.log({"Throughput": running_tokens / running_time})
+                running_time = 0.0
+                running_tokens = 0
+
+            # log and update the learning rate
+            scheduler.step()
+            wandb.log({"Learning Rate": scheduler.get_last_lr()[0]})
+            
             # log the gradient norm to wandb
             grad_norm = 0.0
             for param in model.parameters():
@@ -155,17 +154,10 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
             grad_norm = grad_norm ** 0.5
             wandb.log({"Gradient L2 norm": grad_norm})
 
-            # update the weights
-            optimizer.step()
-
-            # log and update the learning rate
-            scheduler.step()
-            wandb.log({"lr": scheduler.get_last_lr()[0]})
-
-            # log the loss value to wandb and print every 100 batches
-            if b_idx % 100 == 0:
+            # log the loss value to wandb and print
+            if b_idx % interval == 0:
                 print(f"Batch {b_idx+1} - Train loss: {loss.item()}")
-            wandb.log({"train_loss": loss.item()})
+            wandb.log({"Training Loss": loss.item()})
         
         # -----VALIDATION-----
         model.eval()
@@ -186,7 +178,7 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
         
         # log the validation loss to wandb
         avg_val_loss = total_val_loss / len(val_loader)
-        wandb.log({"val_loss": avg_val_loss})
+        wandb.log({"Validation Loss": avg_val_loss})
         print(f"Epoch {epoch+1} validation loss: {avg_val_loss}")
 
     # Save the trained model if it has best val loss
@@ -201,4 +193,3 @@ def main(epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_le
 
 if __name__ == '__main__':
     fire.Fire(main)
-

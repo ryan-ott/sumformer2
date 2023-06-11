@@ -1,4 +1,14 @@
+import math
+
 from datasets import load_dataset, concatenate_datasets
+from torch.optim import lr_scheduler
+from torch.utils.data import DataLoader, SequentialSampler, BatchSampler
+
+
+def create_data_loader(dataset, batch_size, collate_fn):
+    sampler = SequentialSampler(dataset)
+    batch_sampler = BatchSampler(sampler, batch_size, drop_last=False)
+    return DataLoader(dataset, batch_sampler=batch_sampler, collate_fn=collate_fn)
 
 
 def load_reddit(train_split, val_split, min_len=50):
@@ -45,6 +55,22 @@ def split_data(dataset, train_split, val_split):
     test_dataset = test_dataset['test']
 
     return train_dataset, val_dataset, test_dataset
+
+
+def init_schedule(epochs, lr, sched, train_loader, optimizer):
+    if sched == "constant" or sched == "none":
+        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1)
+    elif sched == "cosinedecay":
+        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader) * epochs)
+    elif sched == "invsqrt":
+        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1/math.sqrt(epoch) if epoch > 0 else 1)
+    elif sched == "linear":
+        scheduler = lr_scheduler.LinearLR(optimizer, start_factor=lr/5, end_factor=lr, total_iters=len(train_loader)*epochs)
+    elif sched == "onecycle":
+        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear")
+    else:
+        raise ValueError("Invalid scheduler option provided.")
+    return scheduler
 
 
 def batch_by_instances(device, sequences, labels, batch_size=32, pad_token=0):
