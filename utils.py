@@ -57,17 +57,20 @@ def split_data(dataset, train_split, val_split):
     return train_dataset, val_dataset, test_dataset
 
 
-def init_schedule(epochs, lr, sched, train_loader, optimizer):
+def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
     if sched == "constant" or sched == "none":
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1)
-    elif sched == "cosinedecay":
-        scheduler = lr_scheduler.CosineAnnealingLR(optimizer, T_max=len(train_loader) * epochs)
+    elif sched == "cosineannealing":
+        scheduler = lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=1, eta_min=0.0, last_epoch=-1)
     elif sched == "invsqrt":
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1/math.sqrt(epoch) if epoch > 0 else 1)
     elif sched == "linear":
         scheduler = lr_scheduler.LinearLR(optimizer, start_factor=lr/5, end_factor=lr, total_iters=len(train_loader)*epochs)
     elif sched == "onecycle":
         scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear")
+    elif sched == "noam":  # TODO: write about this in the report
+        warmup_steps = 0.3 * len(train_loader) * epochs
+        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda current_step: (emb_dim ** -0.5) * min((current_step+1) ** -0.5, (current_step+1) * (warmup_steps ** -1.5)))
     else:
         raise ValueError("Invalid scheduler option provided.")
     return scheduler

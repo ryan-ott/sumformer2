@@ -109,7 +109,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
         model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
         optimizer = Adam(model.parameters(), lr)
         criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction='mean')  # * see without padding mask in decoder
-        scheduler = init_schedule(epochs, lr, sched, train_loader, optimizer)
+        scheduler = init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim)
 
         for epoch in range(epochs):
             # torch.autograd.set_detect_anomaly(True)  # ! REMOVE WHEN NOT NEEDED
@@ -225,6 +225,8 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
                 print(f"Generated ids: {generated_ids}")
                 generated_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
                 print(f"Generated ids decoded: {generated_text}")
+
+
         
         # log the test loss to wandb
         avg_test_loss = total_test_loss / len(test_loader)
