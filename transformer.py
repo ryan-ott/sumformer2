@@ -5,7 +5,7 @@ from modules import *
 
 class Sumformer(nn.Module):
     """Text summarization transformer."""
-    def __init__(self, device, emb_dim, vocab_size, max_len, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout):
+    def __init__(self, device, emb_dim, vocab_size, max_len, GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout):
         super().__init__()
 
         self.device = device
@@ -13,9 +13,9 @@ class Sumformer(nn.Module):
         self.token_embedding = nn.Embedding(num_embeddings=vocab_size, embedding_dim=emb_dim).to(device)
         self.pos_embedding = nn.Embedding(num_embeddings=max_len, embedding_dim=emb_dim).to(device)
 
-        self.encoder = [EncoderBlock(emb_dim, enc_heads, enc_hidden, enc_dropout) for _ in range(enc_depth)]
+        self.encoder = [EncoderBlock(emb_dim, enc_heads, enc_hidden, enc_dropout, GLU) for _ in range(enc_depth)]
         for module in self.encoder: module.to(device)
-        self.decoder = [DecoderBlock(emb_dim, dec_heads, dec_hidden, dec_dropout) for _ in range(dec_depth)]
+        self.decoder = [DecoderBlock(emb_dim, dec_heads, dec_hidden, dec_dropout, GLU) for _ in range(dec_depth)]
         for module in self.decoder: module.to(device)
 
         self.toProbs = nn.Linear(emb_dim, vocab_size).to(device)  # convert to probabilities over vocab

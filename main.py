@@ -6,8 +6,7 @@ import os
 import torch
 import wandb
 
-from torch.optim import Adam
-from torch.utils.data import DataLoader
+from torch.optim import AdamW
 from transformers import T5Tokenizer
 
 from transformer import Sumformer
@@ -19,7 +18,7 @@ MIN_INPUT_LEN = 50
 MAX_INPUT_LEN = 256
 
 
-def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_out_len=256, clip=None, sample=None, load=None,
+def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_out_len=256, clip=None, sample=None, load=None, GLU=False,
          enc_heads=1, enc_hidden=1, enc_depth=1, enc_dropout=0.1,
          dec_heads=1, dec_hidden=1, dec_depth=1, dec_dropout=0.1):
     # Ensure deterministic behavior
@@ -106,8 +105,8 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
     #     print(f"First doc decoded: {first_doc_decoded}")
 
     if train:
-        model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
-        optimizer = Adam(model.parameters(), lr)
+        model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
+        optimizer = AdamW(model.parameters(), lr)
         criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction='mean')  # * see without padding mask in decoder
         scheduler = init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim)
 
@@ -206,7 +205,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
     # -----TESTING-----
     if test:
         if load is not None:
-            test_model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
+            test_model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
             test_model.load_state_dict(torch.load(f"{load}"))
         else:
             try:

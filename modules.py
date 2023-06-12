@@ -136,7 +136,7 @@ class MHCrossAttention(nn.Module):
 
 
 class EncoderBlock(nn.Module):
-    def __init__(self, emb, heads, hidden=4, dropout=0.1):
+    def __init__(self, emb, heads, hidden=4, dropout=0.1, GLU=False):
         super().__init__()
 
         self.attention = MHSelfAttention(emb, heads, mask=False)
@@ -144,10 +144,13 @@ class EncoderBlock(nn.Module):
         self.norm1 = nn.LayerNorm(emb)
         self.norm2 = nn.LayerNorm(emb)
 
-        self.ff = nn.Sequential(  # TODO: possibly replace with GLU
-            nn.Linear(emb, hidden * emb),
-            nn.ReLU(),
-            nn.Linear(hidden * emb, emb))
+        if GLU:
+            self.ff = GLUlayer(emb, hidden)
+        else:
+            self.ff = nn.Sequential(  # * test GLU vs FF
+                nn.Linear(emb, hidden * emb),
+                nn.ReLU(),
+                nn.Linear(hidden * emb, emb))
         
         self.dropout = nn.Dropout(dropout)
 
@@ -164,22 +167,26 @@ class EncoderBlock(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, k, heads, hidden=4, dropout=0.1):
+    def __init__(self, emb, heads, hidden=4, dropout=0.1, GLU=False):
         super().__init__()
 
-        self.maskedAttention = MHSelfAttention(k, heads, mask=True)
-        self.crossAttention = MHCrossAttention(k, heads)
+        self.maskedAttention = MHSelfAttention(emb, heads, mask=True)
+        self.crossAttention = MHCrossAttention(emb, heads)
 
-        self.norm1 = nn.LayerNorm(k)
-        self.norm2 = nn.LayerNorm(k)
-        self.norm3 = nn.LayerNorm(k)
+        self.norm1 = nn.LayerNorm(emb)
+        self.norm2 = nn.LayerNorm(emb)
+        self.norm3 = nn.LayerNorm(emb)
 
         self.dropout = nn.Dropout(dropout)
 
-        self.ff = nn.Sequential(  # * possibly replace with GLU
-            nn.Linear(k, hidden * k),
-            nn.ReLU(),
-            nn.Linear(hidden * k, k))
+        if GLU:
+            self.ff = GLUlayer(emb, hidden)
+        else:
+            self.ff = nn.Sequential(  # * test GLU vs FF
+                nn.Linear(emb, hidden * emb),
+                nn.ReLU(),
+                nn.Linear(hidden * emb, emb))
+        
     
     def forward(self, x, context, padding_mask=None):
         masked_attended = self.maskedAttention(x, padding_mask)
@@ -195,3 +202,16 @@ class DecoderBlock(nn.Module):
         x = self.norm3(x + fedforward)
         
         return x
+    
+
+class GLUlayer(nn.Module):
+    """Gated Linear Unit"""
+    def __init__(self, emb_dim, hidden):
+        super().__init__()
+        self.linear1 = nn.Linear(emb_dim, emb_dim * hidden * 2)
+        self.linear2 = nn.Linear(emb_dim * hidden, emb_dim)
+
+    def forward(self, x):
+        x = self.linear1(x)
+        x = F.glu(x, dim=-1)
+        return self.linear2(x)
