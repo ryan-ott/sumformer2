@@ -42,5 +42,23 @@ class Sumformer(nn.Module):
 
         return self.toProbs(y)
     
-    def generate(self, source, source_mask, max_len=512):
-        pass  # TODO
+    def generate(self, source, start_token, end_token, max_len=256, source_mask=None):
+        self.eval()
+        with torch.no_grad():
+            generated = torch.tensor([start_token], device=self.device)
+            
+            for _ in range(max_len):
+                output = self.forward(source, generated.unsqueeze(0), source_mask=source_mask)
+                next_token_logits = output[:, -1, :]  # ? output[:, -1, :]
+
+                # Select the token with the highest probability
+                next_token = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)[0]
+
+                # Concatenate the token to the sequence
+                generated = torch.cat((generated, next_token), dim=-1)  # ? check next_token.unsqueeze(0)
+
+                # Stop if the end token is generated
+                if torch.eq(next_token, end_token):
+                    break
+
+            return generated
