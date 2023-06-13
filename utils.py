@@ -75,37 +75,3 @@ def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
         raise ValueError("Invalid scheduler option provided.")
     return scheduler
 
-
-def batch_by_instances(device, sequences, labels, batch_size=32, pad_token=0):
-    """Create batches of a given number of instances and pad all instances within a batch to be the same length.
-
-    Args:
-        device (torch.device): Device to load the tensors onto
-        sequences (List): A list of input sequences
-        labels (List): List of corresponding labels
-        batch_size (int, optional): Number of instances in a batch. Defaults to 32.
-
-    Returns:
-        tuple: The padded input sequences and their corresponding output labels.
-    """
-    
-    batches_x, batches_y = [], []
-
-    for i in range(0, len(sequences), batch_size):
-        batch_x = sequences[i:i + batch_size]
-        batch_y = labels[i:i + batch_size]
-
-        # Find the max length in the current batch
-        max_len = max(len(x) for x in batch_x)
-
-        # Pad sequences in the current batch and convert them to tensors, then stack them into a single tensor per batch
-        padded_tensor_batch_x = torch.stack(
-            [torch.LongTensor(seq + [pad_token] * (max_len - len(seq))).to(device) for seq in batch_x])
-
-        # Convert labels to tensors and stack these into a single tensor per batch
-        tensor_batch_y = torch.LongTensor(batch_y).to(device)
-
-        batches_x.append(padded_tensor_batch_x)
-        batches_y.append(tensor_batch_y)
-
-    return batches_x, batches_y

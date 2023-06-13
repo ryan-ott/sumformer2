@@ -9,6 +9,9 @@ class Sumformer(nn.Module):
         super().__init__()
 
         self.device = device
+        self.emb_dim = emb_dim
+        self.vocab_size = vocab_size
+        self.max_len = max_len
 
         self.token_embedding = nn.Embedding(num_embeddings=vocab_size, embedding_dim=emb_dim).to(device)
         self.pos_embedding = nn.Embedding(num_embeddings=max_len, embedding_dim=emb_dim).to(device)
@@ -42,14 +45,14 @@ class Sumformer(nn.Module):
 
         return self.toProbs(y)
     
-    def generate(self, source, start_token, end_token, max_len=256, source_mask=None):
+    def generate(self, source, start_token=0, end_token=1, max_len=256, source_mask=None):
         self.eval()
         with torch.no_grad():
             generated = torch.tensor([start_token], device=self.device)
             
             for _ in range(max_len):
                 output = self.forward(source, generated.unsqueeze(0), source_mask=source_mask)
-                next_token_logits = output[:, -1, :]  # ? output[:, -1, :]
+                next_token_logits = output[:, -1, :]  # (b, t, vocab_size) -> (b, vocab_size)
 
                 # Select the token with the highest probability
                 next_token = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)[0]

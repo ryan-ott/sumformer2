@@ -197,10 +197,12 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
         if avg_val_loss < best_val_loss:
             print("Saving model...")
             best_val_loss = avg_val_loss
-            if not os.path.exists(f"models/{wandb.run.name}"):
-                os.mkdir(f"models/{wandb.run.name}")
-            torch.save(model.state_dict(), f"models/{wandb.run.name}/model_{wandb.run.name}_e{epoch}.pt")
-            wandb.save(f"models/{wandb.run.name}/model_{wandb.run.name}_e{epoch}.pt")
+            models_dir = os.path.join(os.path.dirname(__file__), "models", wandb.run.name)
+            if not os.path.exists(models_dir):
+                os.makedirs(models_dir, exist_ok=True)
+            model_path = os.path.join(models_dir, f"model_{wandb.run.name}_e{epoch}.pt")
+            torch.save(model.state_dict(), model_path)
+            wandb.save(model_path)
     
     # -----TESTING-----
     if test:
@@ -219,14 +221,15 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
         with torch.no_grad():
             for b_idx, (encoder_inputs, decoder_inputs) in enumerate(test_loader):
                 # forward pass
-                generated_ids = test_model.generate(encoder_inputs["input_ids"], start_token=BOS_TOKEN_ID, end_token=EOS_TOKEN_ID, max_len=max_out_len)
+                generated_ids = test_model.generate(
+                    encoder_inputs["input_ids"], start_token=BOS_TOKEN_ID, end_token=EOS_TOKEN_ID, max_len=test_model.max_len, source_mask=encoder_inputs["padding_mask"])
+                generated_text = tokenizer.decode(generated_ids, skip_special_tokens=False)
+                
+                print(f"\nBatch {b_idx+1}")
                 print(f"Generated ids shape: {generated_ids.shape}")
                 print(f"Generated ids: {generated_ids}")
-                generated_text = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
                 print(f"Generated ids decoded: {generated_text}")
 
-
-        
         # log the test loss to wandb
         avg_test_loss = total_test_loss / len(test_loader)
         wandb.log({"Test Loss": avg_test_loss})
