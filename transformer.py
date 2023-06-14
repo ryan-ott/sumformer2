@@ -23,45 +23,88 @@ class Sumformer(nn.Module):
 
         self.toProbs = nn.Linear(emb_dim, vocab_size).to(device)  # convert to probabilities over vocab
 
+    def encode(self, source, source_mask=None):
+        tokens_source = self.token_embedding(source.to(self.device))
+        b, t_s, k = tokens_source.size()
+        positions_source = self.pos_embedding(torch.arange(t_s, device=self.device))[None, :, :].expand(b, t_s, k)
+        x = tokens_source + positions_source
+        for enc_layer in self.encoder:
+            x = enc_layer(x, source_mask)
+        return x
+    
+    def decode(self, target, context, target_mask=None):
+        tokens_target = self.token_embedding(target.to(self.device))
+        b, t_t, k = tokens_target.size()
+        positions_target = self.pos_embedding(torch.arange(t_t, device=self.device))[None, :, :].expand(b, t_t, k)
+        y = tokens_target + positions_target
+        for dec_layer in self.decoder:
+            y = dec_layer(y, context, target_mask)
+        return self.toProbs(y)
 
     def forward(self, source, target, source_mask=None, target_mask=None):
-        tokens_source = self.token_embedding(source.to(self.device))
-        tokens_target = self.token_embedding(target.to(self.device))
-
-        b, t_s, k = tokens_source.size()
-        _, t_t, _ = tokens_target.size()
-
-        positions_source = self.pos_embedding(torch.arange(t_s, device=self.device))[None, :, :].expand(b, t_s, k)
-        positions_target = self.pos_embedding(torch.arange(t_t, device=self.device))[None, :, :].expand(b, t_t, k)
-
-        x = tokens_source + positions_source
-        for layer in self.encoder:
-            x = layer(x, source_mask)
-        context = x
-
-        y = tokens_target + positions_target
-        for layer in self.decoder:
-            y = layer(y, context, target_mask)
-
-        return self.toProbs(y)
+        context = self.encode(source, source_mask)
+        return self.decode(target, context, target_mask)
     
-    def generate(self, source, start_token=0, end_token=1, max_len=256, source_mask=None):
+    def greedy(self, source, start_token=0, end_token=1, max_len=256, source_mask=None, logits=False):
         self.eval()
+        logit_list = []
         with torch.no_grad():
-            generated = torch.tensor([start_token], device=self.device)
+            # Encode the source sequence
+            context = self.encode(source, source_mask)
+
+            # Initialize the generated sequence with the start token
+            generated = torch.full((source.size(0), 1), start_token, dtype=torch.long, device=self.device)
             
             for _ in range(max_len):
-                output = self.forward(source, generated.unsqueeze(0), source_mask=source_mask)
-                next_token_logits = output[:, -1, :]  # (b, t, vocab_size) -> (b, vocab_size)
+                output = self.decode(generated, context)
+
+                next_token_logits = output[:, -1, :]  # (b, t, vocab_size) -> (b, 1, vocab_size) (take the last token of the sequence)
 
                 # Select the token with the highest probability
-                next_token = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)[0]
+                next_token = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
 
                 # Concatenate the token to the sequence
-                generated = torch.cat((generated, next_token), dim=-1)  # ? check next_token.unsqueeze(0)
+                generated = torch.cat((generated, next_token), dim=-1)
+
+                logit_list.append(next_token_logits)
 
                 # Stop if the end token is generated
-                if torch.eq(next_token, end_token):
+                if torch.eq(next_token, end_token).all():
+                    break
+            
+            if logits:
+                return generated, torch.stack(logit_list, dim=1)
+            else:
+                return generated, None
+
+
+    def beam(self, source, start_token=0, end_token=1, max_len=256, source_mask=None, num_beams=3, length_penalty=0.6):
+        self.eval()
+        with torch.no_grad():
+            generated = torch.full((num_beams, 1), start_token, dtype=torch.long, device=self.device)
+            scores = torch.zeros((num_beams,), dtype=torch.float, device=self.device)
+
+            for _ in range(max_len):
+                output = self.forward(source.repeat(num_beams, 1), generated, source_mask=source_mask.repeat(num_beams, 1, 1))
+                next_token_logits = output[:, -1, :]  # (b, t, vocab_size) -> (b, vocab_size)
+
+                # Apply a softmax to convert the logits into probabilities
+                probs = F.softmax(next_token_logits, dim=-1)  # (b, vocab_size)
+                
+                # Multiply the probabilities by the scores and find the top num_beams sequences
+                # Apply length penalty: the longer the sentence, the smaller the score.
+                scores = scores.view(-1, 1) * probs / (generated.size(-1)**length_penalty)  # (b, vocab_size)
+                scores, indices = scores.view(-1).topk(num_beams)
+
+                # Convert flat indices to actual token indices
+                next_tokens = indices % probs.size(-1)  # tokens
+                beam_indices = indices // probs.size(-1)  # beam indices
+                
+                # Add the most probable tokens to the sequence
+                generated = torch.cat([generated[beam_indices], next_tokens.unsqueeze(-1)], dim=-1)
+
+                # Stop when end_token is generated in all num_beams sequences
+                if all(next_token == end_token for next_token in next_tokens):
                     break
 
-            return generated
+        return generated[0]  # return the first beam

@@ -1,8 +1,11 @@
 import math
+import os
 
 from datasets import load_dataset, concatenate_datasets
+import torch
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader, SequentialSampler, BatchSampler
+import wandb
 
 
 def create_data_loader(dataset, batch_size, collate_fn):
@@ -58,6 +61,7 @@ def split_data(dataset, train_split, val_split):
 
 
 def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
+    warmup_steps = 0.3 * len(train_loader) * epochs
     if sched == "constant" or sched == "none":
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1)
     elif sched == "cosineannealing":
@@ -65,13 +69,21 @@ def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
     elif sched == "invsqrt":
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1/math.sqrt(epoch) if epoch > 0 else 1)
     elif sched == "linear":
-        scheduler = lr_scheduler.LinearLR(optimizer, start_factor=lr/5, end_factor=lr, total_iters=len(train_loader)*epochs)
+        # scheduler = lr_scheduler.LinearLR(optimizer, start_factor=lr/5, end_factor=lr, total_iters=len(train_loader)*epochs)
+        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda current_step: current_step/warmup_steps if current_step < warmup_steps else 1.0)
     elif sched == "onecycle":
         scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear")
     elif sched == "noam":  # TODO: write about this in the report
-        warmup_steps = 0.3 * len(train_loader) * epochs
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda current_step: (emb_dim ** -0.5) * min((current_step+1) ** -0.5, (current_step+1) * (warmup_steps ** -1.5)))
     else:
         raise ValueError("Invalid scheduler option provided.")
     return scheduler
 
+
+def save_best_model(model, epoch):
+    print("Saving model with better validation loss")
+    models_dir = os.path.join(os.path.dirname(__file__), "models", wandb.run.name)
+    if not os.path.exists(models_dir): os.makedirs(models_dir, exist_ok=True)
+    model_path = os.path.join(models_dir, f"model_{wandb.run.name}_e{epoch}.pt")
+    torch.save(model.state_dict(), model_path)
+    wandb.save(model_path)

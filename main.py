@@ -2,25 +2,25 @@ import random
 import time
 import fire
 import numpy as np
-import os
 import torch
 import wandb
 
+from torch.nn.functional import pad
 from torch.optim import AdamW
 from transformers import T5Tokenizer
 
 from transformer import Sumformer
-from utils import load_reddit, init_schedule, create_data_loader
+from utils import *
 
 
-INTERVAL = 100
+INTERVAL = 100  # Init logging interval
 MIN_INPUT_LEN = 50
 MAX_INPUT_LEN = 256
 
 
-def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecycle", emb_dim=512, max_out_len=256, clip=None, sample=None, load=None, GLU=False,
-         enc_heads=1, enc_hidden=1, enc_depth=1, enc_dropout=0.1,
-         dec_heads=1, dec_hidden=1, dec_depth=1, dec_dropout=0.1):
+def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="linear", emb_dim=512, max_out_len=256, clip=0.0, sample=None, load=None, GLU=False, gen="greedy",
+         enc_heads=8, enc_hidden=4, enc_depth=6, enc_dropout=0.2,
+         dec_heads=8, dec_hidden=4, dec_depth=6, dec_dropout=0.2):
     # Ensure deterministic behavior
     torch.backends.cudnn.deterministic = True
     random.seed(69420)
@@ -31,7 +31,6 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
     best_val_loss = float("inf")  # Init best loss
     running_time = 0.0  # Init throughput measurements
     running_tokens = 0
-    interval = 100  # Init logging interval
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Using device "{device}"')
@@ -56,7 +55,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
     })
 
     # Load dataset and prepare DataLoader
-    train_dataset, val_dataset, test_dataset = load_reddit(0.8, 0.1, min_len=50)
+    train_dataset, val_dataset, test_dataset = load_reddit(0.8, 0.1, min_len=MIN_INPUT_LEN)
 
     tokenizer = T5Tokenizer.from_pretrained('t5-base', use_fast=True, model_max_length=MAX_INPUT_LEN)
     tokenizer.bos_token = "<s>"
@@ -114,7 +113,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
             # torch.autograd.set_detect_anomaly(True)  # ! REMOVE WHEN NOT NEEDED
             # -----TRAINING-----
             model.train()
-
+            print("Training...")
             print(f"Epoch {epoch+1}")
             for b_idx, (encoder_inputs, decoder_inputs) in enumerate(train_loader):
                 start_time = time.time()
@@ -123,21 +122,21 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
                 optimizer.zero_grad()
 
                 # forward pass  # ! NO SOURCE MASK IS BEING PASSED RIGHT NOW
-                outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"])#, source_mask=encoder_inputs["padding_mask"])
+                train_outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"])
 
-                # shift the decoder inputs to the right by 1 (for teacher forcing technique)
-                shifted_outputs = outputs[:, :-1, :].contiguous()
-                shifted_labels = decoder_inputs["input_ids"][:, 1:].contiguous()
+                # shift the decoder inputs to the right by 1 (for teacher forcing technique)  TODO: gradually decrease teacher forcing
+                s_logits = train_outputs[:, :-1, :].contiguous()
+                s_targets = decoder_inputs["input_ids"][:, 1:].contiguous()
 
                 # compute the loss
-                loss = criterion(shifted_outputs.view(-1, shifted_outputs.size(-1)), shifted_labels.view(-1))
+                loss = criterion(s_logits.view(-1, s_logits.size(-1)), s_targets.view(-1))
                 # loss = ((~decoder_inputs["attention_mask"].to(torch.float)) * loss).mean()
 
                 # backpropagate the loss
                 loss.backward()
 
                 # clip the gradients if set
-                if clip is not None:
+                if clip > 0.0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
                 
                 # update the weights
@@ -150,7 +149,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
                 running_time += elapsed_time
                 running_tokens += num_tokens
 
-                if b_idx % interval == 0:
+                if b_idx % INTERVAL == 0:
                     wandb.log({"Throughput": running_tokens / running_time})
                     running_time = 0.0
                     running_tokens = 0
@@ -167,27 +166,41 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
                 wandb.log({"Gradient L2 norm": grad_norm})
 
                 # log the loss value to wandb and print
-                if b_idx % interval == 0:
+                if b_idx % INTERVAL == 0:
                     print(f"Batch {b_idx+1} - Train loss: {loss.item()}")
                 wandb.log({"Training Loss": loss.item()})
             
             # -----VALIDATION-----
+            print("Validating...")
             model.eval()
             total_val_loss = 0.0
             with torch.no_grad():
                 for b_idx, (encoder_inputs, decoder_inputs) in enumerate(val_loader):
-                    # forward pass
-                    outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"])#, source_mask=encoder_inputs["padding_mask"])
+                    outputs, logits = model.greedy(encoder_inputs["input_ids"], start_token=BOS_TOKEN_ID, end_token=EOS_TOKEN_ID, max_len=max_out_len, logits=True)
 
-                    # shift the decoder inputs to the right by 1 (for teacher forcing technique)
-                    shifted_outputs = outputs[:, :-1, :].contiguous()
-                    shifted_labels = decoder_inputs["input_ids"][:, 1:].contiguous()
+                    # s_hift to the right for teacher forcing
+                    s_logits = logits[:, :-1].contiguous()
+                    s_targets = decoder_inputs["input_ids"][:, 1:].contiguous()
 
-                    # compute the loss
-                    loss = criterion(shifted_outputs.view(-1, shifted_outputs.size(-1)), shifted_labels.view(-1))
+                    # Get the sequence lengths
+                    seq_len_logits = s_logits.size(1)
+                    seq_len_targets = s_targets.size(1)
+
+                    # Determine the maximum sequence length and pad the shorter sequence
+                    max_seq_len = max(seq_len_logits, seq_len_targets)
+                    if seq_len_logits < max_seq_len:
+                        padding_size = max_seq_len - seq_len_logits
+                        s_logits = pad(s_logits, pad=(0, 0, 0, padding_size), value=PAD_TOKEN_ID)
+                    elif seq_len_targets < max_seq_len:
+                        padding_size = max_seq_len - seq_len_targets
+                        s_targets = pad(s_targets, pad=(0, padding_size), value=PAD_TOKEN_ID)
+
+                    # Compute the loss
+                    loss = criterion(s_logits.view(-1, s_logits.size(-1)), s_targets.view(-1))
                     # loss = ((~decoder_inputs["attention_mask"].to(torch.float)) * loss).mean()
+                    
                     total_val_loss += loss.item()
-            
+
             # log the validation loss to wandb
             avg_val_loss = total_val_loss / len(val_loader)
             wandb.log({"Validation Loss": avg_val_loss})
@@ -195,17 +208,12 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
 
         # Save the trained model if it has best val loss
         if avg_val_loss < best_val_loss:
-            print("Saving model...")
             best_val_loss = avg_val_loss
-            models_dir = os.path.join(os.path.dirname(__file__), "models", wandb.run.name)
-            if not os.path.exists(models_dir):
-                os.makedirs(models_dir, exist_ok=True)
-            model_path = os.path.join(models_dir, f"model_{wandb.run.name}_e{epoch}.pt")
-            torch.save(model.state_dict(), model_path)
-            wandb.save(model_path)
+            save_best_model(model, epoch)
     
     # -----TESTING-----
     if test:
+        print("Testing...")
         if load is not None:
             test_model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
             test_model.load_state_dict(torch.load(f"{load}"))
@@ -220,14 +228,18 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
         total_test_loss = 0.0
         with torch.no_grad():
             for b_idx, (encoder_inputs, decoder_inputs) in enumerate(test_loader):
-                # forward pass
-                generated_ids = test_model.generate(
-                    encoder_inputs["input_ids"], start_token=BOS_TOKEN_ID, end_token=EOS_TOKEN_ID, max_len=test_model.max_len, source_mask=encoder_inputs["padding_mask"])
-                generated_text = tokenizer.decode(generated_ids, skip_special_tokens=False)
+                if gen == "greedy":
+                    test_outputs = test_model.greedy(
+                        encoder_inputs["input_ids"], start_token=BOS_TOKEN_ID, end_token=EOS_TOKEN_ID, max_len=max_out_len)
+                elif gen == "beam":  # ! DOESN'T WORK YET
+                    test_outputs = test_model.beam(encoder_inputs["input_ids"], start_token=BOS_TOKEN_ID, end_token=EOS_TOKEN_ID, max_len=max_out_len, source_mask=None)
+                else:
+                     raise ValueError(f"{gen} is not a valid generation method")
+                generated_text = tokenizer.decode(test_outputs, skip_special_tokens=False)
                 
                 print(f"\nBatch {b_idx+1}")
-                print(f"Generated ids shape: {generated_ids.shape}")
-                print(f"Generated ids: {generated_ids}")
+                print(f"Generated ids shape: {test_outputs.shape}")
+                print(f"Generated ids: {test_outputs}")
                 print(f"Generated ids decoded: {generated_text}")
 
         # log the test loss to wandb
@@ -235,7 +247,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=5e-4, sched="onecyc
         wandb.log({"Test Loss": avg_test_loss})
 
 
-
 if __name__ == '__main__':
     fire.Fire(main)
     # main(train=False, test=True, load="models/fearless-oath-237/model_fearless-oath-237_e0.pt")
+    # main(batch_size=8, sample=48, max_out_len=32, enc_heads=2, dec_heads=4, test=True)
