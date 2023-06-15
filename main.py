@@ -110,7 +110,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
         scheduler = init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim)
 
         for epoch in range(epochs):
-            # torch.autograd.set_detect_anomaly(True)  # ! REMOVE WHEN NOT NEEDED
+            torch.autograd.set_detect_anomaly(True)  # ! REMOVE WHEN NOT NEEDED
             # -----TRAINING-----
             model.train()
             print("Training...")
@@ -201,20 +201,39 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
                     
                     total_val_loss += loss.item()
 
+                    del s_logits, s_targets
+                    torch.cuda.empty_cache()
+
             # log the validation loss to wandb
             avg_val_loss = total_val_loss / len(val_loader)
             wandb.log({"Validation Loss": avg_val_loss})
             print(f"Epoch {epoch+1} validation loss: {avg_val_loss}")
 
-        # Save the trained model if it has best val loss
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            save_best_model(model, epoch)
+            # Save the trained model if it has best val loss
+            if avg_val_loss < best_val_loss:
+                print("Saving model with better validation loss")
+                best_val_loss = avg_val_loss
+                model_params = {
+                    'device': device,
+                    'emb_dim': emb_dim,
+                    'vocab_size': tokenizer.vocab_size,
+                    'max_len': max(MAX_INPUT_LEN, max_out_len),
+                    'GLU': GLU,
+                    'enc_heads': enc_heads,
+                    'enc_hidden': enc_hidden,
+                    'enc_depth': enc_depth,
+                    'enc_dropout': enc_dropout,
+                    'dec_heads': dec_heads,
+                    'dec_hidden': dec_hidden,
+                    'dec_depth': dec_depth,
+                    'dec_dropout': dec_dropout
+                }
+                save_best_model(model, epoch, model_params)
     
     # -----TESTING-----
     if test:
         print("Testing...")
-        if load is not None:
+        if load is not None:  # TODO automatically load the correct params
             test_model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
             test_model.load_state_dict(torch.load(f"{load}"))
         else:
@@ -245,6 +264,25 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
         # log the test loss to wandb
         avg_test_loss = total_test_loss / len(test_loader)
         wandb.log({"Test Loss": avg_test_loss})
+
+
+def load_n_sum(model_path, input_str, tokenizer, max_out_len):
+    # Load the model
+    model_info = torch.load(model_path)
+    model_params = model_info['params']
+    model = Sumformer(**model_params).to(model_params['device'])
+    model.load_state_dict(model_info['state_dict'])
+    model.eval()
+
+    # Encode the input string
+    input_ids = tokenizer.encode(input_str, return_tensors="pt").to(model_params['device'])
+
+    # Generate the summary
+    with torch.no_grad():
+        summary_ids = model.greedy(input_ids, start_token=tokenizer.bos_token_id, end_token=tokenizer.eos_token_id, max_len=max_out_len)
+    
+    # Return the decoded summary
+    return tokenizer.decode(summary_ids[0], skip_special_tokens=True)
 
 
 if __name__ == '__main__':

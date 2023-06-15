@@ -80,10 +80,17 @@ def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
     return scheduler
 
 
-def save_best_model(model, epoch):
-    print("Saving model with better validation loss")
+def save_best_model(model, epoch, model_params):
     models_dir = os.path.join(os.path.dirname(__file__), "models", wandb.run.name)
-    if not os.path.exists(models_dir): os.makedirs(models_dir, exist_ok=True)
+    
+    if not os.path.exists(models_dir):
+        os.makedirs(models_dir, exist_ok=True)
+    
     model_path = os.path.join(models_dir, f"model_{wandb.run.name}_e{epoch}.pt")
-    torch.save(model.state_dict(), model_path)
+    model_info = {
+        'params': model_params,
+        'state_dict': model.state_dict()
+    }
+    
+    torch.save(model_info, model_path)
     wandb.save(model_path)

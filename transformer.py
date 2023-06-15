@@ -53,10 +53,10 @@ class Sumformer(nn.Module):
             context = self.encode(source, source_mask)
 
             # Initialize the generated sequence with the start token
-            generated = torch.full((source.size(0), 1), start_token, dtype=torch.long, device=self.device)
+            generated = torch.full((source.size(0), 1), start_token, dtype=torch.long)
             
             for _ in range(max_len):
-                output = self.decode(generated, context)
+                output = self.decode(generated.to(self.device), context)
 
                 next_token_logits = output[:, -1, :]  # (b, t, vocab_size) -> (b, 1, vocab_size) (take the last token of the sequence)
 
@@ -75,7 +75,7 @@ class Sumformer(nn.Module):
             if logits:
                 return generated, torch.stack(logit_list, dim=1)
             else:
-                return generated, None
+                return generated
 
 
     def beam(self, source, start_token=0, end_token=1, max_len=256, source_mask=None, num_beams=3, length_penalty=0.6):
