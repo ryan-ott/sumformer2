@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 
@@ -5,16 +6,20 @@ from modules import *
 
 class Sumformer(nn.Module):
     """Text summarization transformer."""
-    def __init__(self, device, emb_dim, vocab_size, max_len, GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout):
+    def __init__(self, device, emb_dim, vocab_size, max_len, pos_encoding, GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout):
         super().__init__()
 
         self.device = device
         self.emb_dim = emb_dim
         self.vocab_size = vocab_size
         self.max_len = max_len
+        # self.pos_encoding = pos_encoding
 
         self.token_embedding = nn.Embedding(num_embeddings=vocab_size, embedding_dim=emb_dim).to(device)
-        self.pos_embedding = nn.Embedding(num_embeddings=max_len, embedding_dim=emb_dim).to(device)
+        if pos_encoding:
+            self.pos_embedding = self.compute_encodings(max_len, emb_dim).to(device)
+        else:
+            self.pos_embedding = nn.Embedding(num_embeddings=max_len, embedding_dim=emb_dim).to(device)
 
         self.encoder = [EncoderBlock(emb_dim, enc_heads, enc_hidden, enc_dropout, GLU) for _ in range(enc_depth)]
         for module in self.encoder: module.to(device)
@@ -22,6 +27,17 @@ class Sumformer(nn.Module):
         for module in self.decoder: module.to(device)
 
         self.toProbs = nn.Linear(emb_dim, vocab_size).to(device)  # convert to probabilities over vocab
+
+    def compute_encodings(self, max_len, emb_dim):
+        """Initialise positional encodings."""
+        pos_encodings = torch.zeros(max_len, emb_dim).float()
+        position = torch.arange(0, max_len).float().unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, emb_dim, 2).float() * -(np.log(10000.0) / emb_dim))
+
+        pos_encodings[:, 0::2] = torch.sin(position * div_term)
+        pos_encodings[:, 1::2] = torch.cos(position * div_term)
+
+        return nn.Embedding.from_pretrained(pos_encodings, freeze=True)
 
     def encode(self, source, source_mask=None):
         tokens_source = self.token_embedding(source.to(self.device))

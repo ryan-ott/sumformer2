@@ -18,7 +18,7 @@ MIN_INPUT_LEN = 50
 MAX_INPUT_LEN = 256
 
 
-def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="linear", emb_dim=512, max_out_len=256, clip=0.0, sample=None, load=None, GLU=False, gen="greedy",
+def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="linear", emb_dim=512, max_out_len=50, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=True,
          enc_heads=8, enc_hidden=4, enc_depth=6, enc_dropout=0.2,
          dec_heads=8, dec_hidden=4, dec_depth=6, dec_dropout=0.2):
     # Ensure deterministic behavior
@@ -52,6 +52,10 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
         "dec_dropout": dec_dropout,
         "schedule": sched,
         "clip": clip,
+        "pos_enc": pos_enc,
+        "GLU": GLU,
+        "inference_type": gen,
+        "ignore_padding": ignore_pad
     })
 
     # Load dataset and prepare DataLoader
@@ -104,9 +108,9 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
     #     print(f"First doc decoded: {first_doc_decoded}")
 
     if train:
-        model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
+        model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), pos_enc, GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
         optimizer = AdamW(model.parameters(), lr)
-        criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID, reduction='mean')  # * see without padding mask in decoder
+        criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID if ignore_pad else -100, reduction='mean')  # * see without padding mask in decoder
         scheduler = init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim)
 
         for epoch in range(epochs):
@@ -160,8 +164,9 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
                 
                 # log the gradient norm to wandb
                 grad_norm = 0.0
-                for param in model.parameters():
-                    grad_norm += param.grad.data.norm(2).item() ** 2
+                for name, param in model.named_parameters():
+                    if "pos_embedding" not in name and param.grad is not None:  # ignore positional encoding as it is not learned
+                        grad_norm += param.grad.data.norm(2).item() ** 2
                 grad_norm = grad_norm ** 0.5
                 wandb.log({"Gradient L2 norm": grad_norm})
 
@@ -218,6 +223,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
                     'emb_dim': emb_dim,
                     'vocab_size': tokenizer.vocab_size,
                     'max_len': max(MAX_INPUT_LEN, max_out_len),
+                    'pos_encoding': pos_enc,
                     'GLU': GLU,
                     'enc_heads': enc_heads,
                     'enc_hidden': enc_hidden,
@@ -234,7 +240,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
     if test:
         print("Testing...")
         if load is not None:  # TODO automatically load the correct params
-            test_model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
+            test_model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), pos_enc, GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
             test_model.load_state_dict(torch.load(f"{load}"))
         else:
             try:

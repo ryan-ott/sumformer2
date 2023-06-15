@@ -144,13 +144,10 @@ class EncoderBlock(nn.Module):
         self.norm1 = nn.LayerNorm(emb)
         self.norm2 = nn.LayerNorm(emb)
 
-        if GLU:
+        if GLU:  # * test GLU vs FF
             self.ff = GLUlayer(emb, hidden)
         else:
-            self.ff = nn.Sequential(  # * test GLU vs FF
-                nn.Linear(emb, hidden * emb),
-                nn.ReLU(),
-                nn.Linear(hidden * emb, emb))
+            self.ff = FFLayer(emb, hidden)
         
         self.dropout = nn.Dropout(dropout)
 
@@ -182,10 +179,7 @@ class DecoderBlock(nn.Module):
         if GLU:
             self.ff = GLUlayer(emb, hidden)
         else:
-            self.ff = nn.Sequential(  # * test GLU vs FF
-                nn.Linear(emb, hidden * emb),
-                nn.ReLU(),
-                nn.Linear(hidden * emb, emb))
+            self.ff = FFLayer(emb, hidden)
         
     
     def forward(self, x, context, padding_mask=None):
@@ -214,4 +208,17 @@ class GLUlayer(nn.Module):
     def forward(self, x):
         x = self.linear1(x)
         x = F.glu(x, dim=-1)
+        return self.linear2(x)
+    
+
+class FFLayer(nn.Module):
+    """Feed-forward layer"""
+    def __init__(self, emb_dim, hidden):
+        super().__init__()
+        self.linear1 = nn.Linear(emb_dim, emb_dim * hidden)
+        self.linear2 = nn.Linear(emb_dim * hidden, emb_dim)
+
+    def forward(self, x):
+        x = self.linear1(x)
+        x = F.relu(x)
         return self.linear2(x)

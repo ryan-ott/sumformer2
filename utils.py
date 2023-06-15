@@ -69,11 +69,10 @@ def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
     elif sched == "invsqrt":
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda epoch: 1/math.sqrt(epoch) if epoch > 0 else 1)
     elif sched == "linear":
-        # scheduler = lr_scheduler.LinearLR(optimizer, start_factor=lr/5, end_factor=lr, total_iters=len(train_loader)*epochs)
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda current_step: current_step/warmup_steps if current_step < warmup_steps else 1.0)
     elif sched == "onecycle":
         scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear")
-    elif sched == "noam":  # TODO: write about this in the report
+    elif sched == "noam":  # TODO: fix this!!
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda current_step: (emb_dim ** -0.5) * min((current_step+1) ** -0.5, (current_step+1) * (warmup_steps ** -1.5)))
     else:
         raise ValueError("Invalid scheduler option provided.")
