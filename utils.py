@@ -80,16 +80,17 @@ def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
 
 
 def save_best_model(model, epoch, model_params):
-    models_dir = os.path.join(os.path.dirname(__file__), "models", wandb.run.name)
-    
-    if not os.path.exists(models_dir):
-        os.makedirs(models_dir, exist_ok=True)
-    
-    model_path = os.path.join(models_dir, f"model_{wandb.run.name}_e{epoch}.pt")
     model_info = {
         'params': model_params,
         'state_dict': model.state_dict()
     }
-    
+    model_path = f"model_{wandb.run.name}_e{epoch}.pt"
     torch.save(model_info, model_path)
-    wandb.save(model_path)
+
+    # Create a new artifact
+    artifact = wandb.Artifact(f"model_{wandb.run.name}_e{epoch}", type='model')
+    artifact.add_file(model_path)
+    wandb.log_artifact(artifact)
+
+    # Remove the file locally
+    os.remove(model_path)

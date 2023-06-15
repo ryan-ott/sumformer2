@@ -18,9 +18,9 @@ MIN_INPUT_LEN = 50
 MAX_INPUT_LEN = 256
 
 
-def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="linear", emb_dim=512, max_out_len=50, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=True,
-         enc_heads=8, enc_hidden=4, enc_depth=6, enc_dropout=0.2,
-         dec_heads=8, dec_hidden=4, dec_depth=6, dec_dropout=0.2):
+def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="linear", emb_dim=512, max_out_len=50, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=False,
+         enc_heads=8, enc_hidden=6, enc_depth=8, enc_dropout=0.2,
+         dec_heads=8, dec_hidden=6, dec_depth=8, dec_dropout=0.2):
     # Ensure deterministic behavior
     torch.backends.cudnn.deterministic = True
     random.seed(69420)
@@ -183,6 +183,11 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
                 for b_idx, (encoder_inputs, decoder_inputs) in enumerate(val_loader):
                     outputs, logits = model.greedy(encoder_inputs["input_ids"], start_token=BOS_TOKEN_ID, end_token=EOS_TOKEN_ID, max_len=max_out_len, logits=True)
 
+                    # Decode an example output
+                    if b_idx == len(val_loader) - 1:
+                        example_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                        print(f"Example output: {example_output}")
+
                     # s_hift to the right for teacher forcing
                     s_logits = logits[:, :-1].contiguous()
                     s_targets = decoder_inputs["input_ids"][:, 1:].contiguous()
@@ -270,6 +275,8 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
         # log the test loss to wandb
         avg_test_loss = total_test_loss / len(test_loader)
         wandb.log({"Test Loss": avg_test_loss})
+    
+    wandb.finish()
 
 
 def load_n_sum(model_path, input_str, tokenizer, max_out_len):
