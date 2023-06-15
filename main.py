@@ -110,7 +110,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
         scheduler = init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim)
 
         for epoch in range(epochs):
-            torch.autograd.set_detect_anomaly(True)  # ! REMOVE WHEN NOT NEEDED
+            # torch.autograd.set_detect_anomaly(True)  # ! REMOVE WHEN NOT NEEDED
             # -----TRAINING-----
             model.train()
             print("Training...")

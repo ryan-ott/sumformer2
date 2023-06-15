@@ -53,10 +53,10 @@ class Sumformer(nn.Module):
             context = self.encode(source, source_mask)
 
             # Initialize the generated sequence with the start token
-            generated = torch.full((source.size(0), 1), start_token, dtype=torch.long)
+            generated = torch.full((source.size(0), 1), start_token, dtype=torch.long, device=self.device)
             
             for _ in range(max_len):
-                output = self.decode(generated.to(self.device), context)
+                output = self.decode(generated, context)
 
                 next_token_logits = output[:, -1, :]  # (b, t, vocab_size) -> (b, 1, vocab_size) (take the last token of the sequence)
 
