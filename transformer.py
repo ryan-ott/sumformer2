@@ -2,6 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from torch.utils.checkpoint import checkpoint
+
 from modules import *
 
 class Sumformer(nn.Module):
@@ -45,7 +47,7 @@ class Sumformer(nn.Module):
         positions_source = self.pos_embedding(torch.arange(t_s, device=self.device))[None, :, :].expand(b, t_s, k)
         x = tokens_source + positions_source
         for enc_layer in self.encoder:
-            x = enc_layer(x, source_mask)
+            x = checkpoint(enc_layer, x, source_mask)
         return x
     
     def decode(self, target, context, target_mask=None):
@@ -54,7 +56,7 @@ class Sumformer(nn.Module):
         positions_target = self.pos_embedding(torch.arange(t_t, device=self.device))[None, :, :].expand(b, t_t, k)
         y = tokens_target + positions_target
         for dec_layer in self.decoder:
-            y = dec_layer(y, context, target_mask)
+            y = checkpoint(dec_layer, y, context, target_mask)
         return self.toProbs(y)
 
     def forward(self, source, target, source_mask=None, target_mask=None):

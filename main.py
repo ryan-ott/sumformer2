@@ -19,7 +19,7 @@ MIN_INPUT_LEN = 50
 MAX_INPUT_LEN = 256
 
 
-def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="linear", emb_dim=512, max_out_len=50, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=True,
+def main(train=True, test=False, epochs=1, batch_size=8, lr=3.4e-4, sched="linear", emb_dim=512, max_out_len=50, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=True,
          enc_heads=8, enc_hidden=6, enc_depth=8, enc_dropout=0.2,
          dec_heads=8, dec_hidden=6, dec_depth=8, dec_dropout=0.2):
     # Ensure deterministic behavior
@@ -174,6 +174,9 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
                 if b_idx % INTERVAL == 0:
                     print(f"Batch {b_idx+1} - Train loss: {loss.item()}")
                 wandb.log({"Training Loss": loss.item()})
+
+                # Clear CUDA cache
+                torch.cuda.empty_cache()
             
             # -----VALIDATION-----
             print("Validating...")
@@ -228,6 +231,9 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
                     'dec_dropout': dec_dropout
                 }
                 save_best_model(model, epoch, model_params)
+            
+            # Clear CUDA cache
+            torch.cuda.empty_cache()
     
     # -----TESTING-----
     if test:
