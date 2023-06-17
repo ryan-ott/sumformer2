@@ -77,7 +77,7 @@ def split_data(dataset, train_split, val_split):
 
 
 def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
-    warmup_steps = 0.3 * len(train_loader) * epochs
+    warmup_steps = 0.05 * len(train_loader) * epochs
     if sched == "constant" or sched == "none":
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda _: 1)
     elif sched == "cosineannealing":
@@ -87,7 +87,7 @@ def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
     elif sched == "linear":
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda current_step: current_step/warmup_steps if current_step < warmup_steps else 1.0)
     elif sched == "onecycle":
-        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear")
+        scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.05, anneal_strategy="linear")
     elif sched == "noam":  # TODO: fix this!!
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda current_step: (emb_dim ** -0.5) * min((current_step+1) ** -0.5, (current_step+1) * (warmup_steps ** -1.5)))
     elif sched == "plateau":
