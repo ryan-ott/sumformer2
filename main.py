@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import wandb
 
+from torch.cuda.amp import autocast, GradScaler
 from torch.nn.functional import pad
 from torch.optim import AdamW
 from transformers import T5Tokenizer
@@ -18,7 +19,7 @@ MIN_INPUT_LEN = 50
 MAX_INPUT_LEN = 256
 
 
-def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="linear", emb_dim=512, max_out_len=50, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=False,
+def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="linear", emb_dim=512, max_out_len=50, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=True,
          enc_heads=8, enc_hidden=6, enc_depth=8, enc_dropout=0.2,
          dec_heads=8, dec_hidden=6, dec_depth=8, dec_dropout=0.2):
     # Ensure deterministic behavior
@@ -98,6 +99,8 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
     #     first_doc_decoded = tokenizer.decode(first_doc)
     #     print(f"First doc decoded: {first_doc_decoded}")
 
+    scaler = GradScaler()  # Init gradient scaler for mixed precision training
+
     if train:
         model = Sumformer(device, emb_dim, len(tokenizer.get_vocab()), max(MAX_INPUT_LEN, max_out_len), pos_enc, GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
         optimizer = AdamW(model.parameters(), lr)
@@ -119,28 +122,29 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
                 teacher_forcing_prob = 1.0 - (epoch / epochs)
                 teacher_forcing = random.random() < teacher_forcing_prob
 
-                if teacher_forcing:
-                    print("Training with teacher forcing...")
-                    train_outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"])
-                    train_logits = train_outputs[:, :-1, :].contiguous()  # shift the decoder inputs one to the right
-                else:
-                    print("Training without teacher forcing...")
-                    train_outputs, train_logits = model.greedy(encoder_inputs["input_ids"], start_token=tokenizer.bos_token_id, end_token=tokenizer.eos_token_id, max_len=max_out_len, logits=True)
-                
-                train_targets = decoder_inputs["input_ids"][:, 1:].contiguous()  # shift the targets one to the left
+                with autocast():
+                    if teacher_forcing:
+                        train_outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"])
+                        train_logits = train_outputs[:, :-1, :].contiguous()  # shift the decoder inputs one to the right
+                    else:
+                        train_outputs, train_logits = model.greedy(encoder_inputs["input_ids"], start_token=tokenizer.bos_token_id, end_token=tokenizer.eos_token_id, max_len=max_out_len, logits=True)
+                    
+                    train_targets = decoder_inputs["input_ids"][:, 1:].contiguous()  # shift the targets one to the left
 
-                # Make the logits and targets same size in the sequence dimension
-                train_logits, train_targets = pad_sequences(train_logits, train_targets, pad_token=tokenizer.pad_token_id)
+                    # Make the logits and targets same size in the sequence dimension
+                    train_logits, train_targets = pad_sequences(train_logits, train_targets, pad_token=tokenizer.pad_token_id)
 
-                loss = criterion(train_logits.view(-1, train_logits.size(-1)), train_targets.view(-1))
+                    loss = criterion(train_logits.view(-1, train_logits.size(-1)), train_targets.view(-1))
 
-                loss.backward()
+                scaler.scale(loss).backward()
 
                 # clip the gradients if set
                 if clip > 0.0:
+                    scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
                 
-                optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
 
                 # measure throughput
                 end_time = time.time()
@@ -177,6 +181,9 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
             total_val_loss = 0.0
             with torch.no_grad():
                 for b_idx, (encoder_inputs, decoder_inputs) in enumerate(val_loader):
+                    encoder_inputs["input_ids"] = encoder_inputs["input_ids"].half()
+                    decoder_inputs["input_ids"] = decoder_inputs["input_ids"].half()
+
                     val_outputs, val_logits = model.greedy(encoder_inputs["input_ids"], start_token=tokenizer.bos_token_id, end_token=tokenizer.eos_token_id, max_len=max_out_len, logits=True)
 
                     # Decode an example output
@@ -193,7 +200,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
                     # Make the logits and targets same size in the sequence dimension
                     val_logits, val_targets = pad_sequences(val_logits, val_targets, pad_token=tokenizer.pad_token_id)
 
-                    loss = criterion(val_logits.view(-1, val_logits.size(-1)), val_targets.view(-1))
+                    loss = criterion(val_logits.view(-1, val_logits.size(-1)), val_targets.view(-1)).half()
 
                     total_val_loss += loss.item()
 
