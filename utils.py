@@ -96,9 +96,9 @@ def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
         warmup_steps = 1000
         def lr_lambda(current_step):
             if current_step < warmup_steps:
-                return current_step / warmup_steps * lr
+                return (lr - lr/10) / warmup_steps * current_step + lr/10
             else:
-                return lr * ((len(train_loader) * epochs - current_step) / (len(train_loader) * epochs - warmup_steps))
+                return ((1/5 * lr) - lr) / (len(train_loader)*epochs - warmup_steps) * (current_step - warmup_steps) + lr
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     else:
         raise ValueError("Invalid scheduler option provided.")
