@@ -19,9 +19,9 @@ MIN_INPUT_LEN = 50
 MAX_INPUT_LEN = 256
 
 
-def main(train=True, test=False, epochs=1, batch_size=8, lr=3.4e-4, sched="linear", emb_dim=512, max_out_len=50, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=True,
-         enc_heads=8, enc_hidden=6, enc_depth=8, enc_dropout=0.2,
-         dec_heads=8, dec_hidden=6, dec_depth=8, dec_dropout=0.2):
+def main(train=True, test=False, epochs=1, batch_size=8, lr=3.4e-4, sched="warmup", emb_dim=512, max_out_len=30, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=True,
+         enc_heads=8, enc_hidden=6, enc_depth=8, enc_dropout=0.4,
+         dec_heads=8, dec_hidden=6, dec_depth=8, dec_dropout=0.4):
     # Ensure deterministic behavior
     set_seed(69420)
 
@@ -57,7 +57,9 @@ def main(train=True, test=False, epochs=1, batch_size=8, lr=3.4e-4, sched="linea
     })
 
     # Load dataset and prepare DataLoader
-    train_dataset, val_dataset, test_dataset = load_reddit(0.8, 0.1, min_len=MIN_INPUT_LEN)
+    # train_dataset, val_dataset, test_dataset = load_reddit(0.8, 0.1, min_len=MIN_INPUT_LEN)
+    train_dataset, val_dataset, test_dataset = load_xsum()
+    print(len(train_dataset))
 
     # Init the T5 tokenizer
     tokenizer = setup_tokenizer()

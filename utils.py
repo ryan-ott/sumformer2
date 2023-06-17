@@ -14,6 +14,25 @@ def create_data_loader(dataset, batch_size, collate_fn):
     return DataLoader(dataset, batch_sampler=batch_sampler, collate_fn=collate_fn)
 
 
+def load_xsum():
+    """Load the XSum dataset and split into train, validation, and test sets. Keep only the docs and their summary."""
+    train_dataset = load_dataset("xsum", split="train")
+    val_dataset = load_dataset("xsum", split="validation")
+    test_dataset = load_dataset("xsum", split="test")
+
+    # Adding a the doc length of each instance
+    train_dataset = train_dataset.map(lambda x: {'doc_len': len(x['document'])})
+    val_dataset = val_dataset.map(lambda x: {'doc_len': len(x['document'])})
+    test_dataset = test_dataset.map(lambda x: {'doc_len': len(x['document'])})
+
+    # Sort the datasets by document length
+    train_dataset = train_dataset.sort('doc_len')
+    val_dataset = val_dataset.sort('doc_len')
+    test_dataset = test_dataset.sort('doc_len')
+
+    return train_dataset, val_dataset, test_dataset
+
+
 def load_reddit(train_split, val_split, min_len=50):
     """Concatenate the short and long reddit TIFU datasets and split into train, validation, and test sets. Keep only the docs and their summary."""
     dataset_short = load_dataset("reddit_tifu", "short")
@@ -71,6 +90,15 @@ def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
         scheduler = lr_scheduler.OneCycleLR(optimizer, max_lr=lr, total_steps=len(train_loader)*epochs, pct_start=0.3, anneal_strategy="linear")
     elif sched == "noam":  # TODO: fix this!!
         scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda current_step: (emb_dim ** -0.5) * min((current_step+1) ** -0.5, (current_step+1) * (warmup_steps ** -1.5)))
+    elif sched == "plateau":
+        scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
+    elif sched == "warmup":
+        def lr_lambda(current_step):
+            if current_step < warmup_steps:
+                return current_step / warmup_steps * lr
+            else:
+                return lr * ((len(train_loader) * epochs - current_step) / (len(train_loader) * epochs - warmup_steps))
+        scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     else:
         raise ValueError("Invalid scheduler option provided.")
     return scheduler
