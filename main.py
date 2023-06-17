@@ -181,28 +181,26 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
             total_val_loss = 0.0
             with torch.no_grad():
                 for b_idx, (encoder_inputs, decoder_inputs) in enumerate(val_loader):
-                    encoder_inputs["input_ids"] = encoder_inputs["input_ids"].half()
-                    decoder_inputs["input_ids"] = decoder_inputs["input_ids"].half()
+                    with autocast():
+                        val_outputs, val_logits = model.greedy(encoder_inputs["input_ids"], start_token=tokenizer.bos_token_id, end_token=tokenizer.eos_token_id, max_len=max_out_len, logits=True)
 
-                    val_outputs, val_logits = model.greedy(encoder_inputs["input_ids"], start_token=tokenizer.bos_token_id, end_token=tokenizer.eos_token_id, max_len=max_out_len, logits=True)
+                        # Decode an example output
+                        if b_idx == len(val_loader) - 1:
+                            example_input = tokenizer.decode(encoder_inputs["input_ids"][0], skip_special_tokens=True)
+                            example_target = tokenizer.decode(decoder_inputs["input_ids"][0], skip_special_tokens=True)
+                            example_output = tokenizer.decode(val_outputs[0], skip_special_tokens=True)
+                            print(f"Example input: {example_input}")
+                            print(f"Example target: {example_target}")
+                            print(f"Example output: {example_output}")
 
-                    # Decode an example output
-                    if b_idx == len(val_loader) - 1:
-                        example_input = tokenizer.decode(encoder_inputs["input_ids"][0], skip_special_tokens=True)
-                        example_target = tokenizer.decode(decoder_inputs["input_ids"][0], skip_special_tokens=True)
-                        example_output = tokenizer.decode(val_outputs[0], skip_special_tokens=True)
-                        print(f"Example input: {example_input}")
-                        print(f"Example target: {example_target}")
-                        print(f"Example output: {example_output}")
+                        val_targets = decoder_inputs["input_ids"][:, 1:].contiguous()  # shift the targets one to the left
 
-                    val_targets = decoder_inputs["input_ids"][:, 1:].contiguous()  # shift the targets one to the left
+                        # Make the logits and targets same size in the sequence dimension
+                        val_logits, val_targets = pad_sequences(val_logits, val_targets, pad_token=tokenizer.pad_token_id)
 
-                    # Make the logits and targets same size in the sequence dimension
-                    val_logits, val_targets = pad_sequences(val_logits, val_targets, pad_token=tokenizer.pad_token_id)
+                        loss = criterion(val_logits.view(-1, val_logits.size(-1)), val_targets.view(-1))
 
-                    loss = criterion(val_logits.view(-1, val_logits.size(-1)), val_targets.view(-1)).half()
-
-                    total_val_loss += loss.item()
+                        total_val_loss += loss.item()
 
             # log the validation loss to wandb
             avg_val_loss = total_val_loss / len(val_loader)
