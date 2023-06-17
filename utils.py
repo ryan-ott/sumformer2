@@ -93,6 +93,7 @@ def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
     elif sched == "plateau":
         scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10, threshold=0.0001, threshold_mode='rel', cooldown=0, min_lr=0, eps=1e-08, verbose=True)
     elif sched == "warmup":
+        warmup_steps = 1000
         def lr_lambda(current_step):
             if current_step < warmup_steps:
                 return current_step / warmup_steps * lr
