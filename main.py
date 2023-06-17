@@ -22,11 +22,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
          enc_heads=8, enc_hidden=6, enc_depth=8, enc_dropout=0.2,
          dec_heads=8, dec_hidden=6, dec_depth=8, dec_dropout=0.2):
     # Ensure deterministic behavior
-    torch.backends.cudnn.deterministic = True
-    random.seed(69420)
-    np.random.seed(69420)
-    torch.manual_seed(69420)
-    torch.cuda.manual_seed_all(69420)
+    set_seed(69420)
 
     best_val_loss = float("inf")  # Init best loss
     running_time = 0.0  # Init throughput measurements
@@ -62,14 +58,8 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
     # Load dataset and prepare DataLoader
     train_dataset, val_dataset, test_dataset = load_reddit(0.8, 0.1, min_len=MIN_INPUT_LEN)
 
-    tokenizer = T5Tokenizer.from_pretrained('t5-base', use_fast=True, model_max_length=MAX_INPUT_LEN)
-    tokenizer.bos_token = "<s>"
-    tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids("<s>")
-    tokenizer.add_special_tokens({"bos_token": "<s>"})
-    PAD_TOKEN_ID = tokenizer.pad_token_id  # 0
-    BOS_TOKEN_ID = tokenizer.bos_token_id  # 32100
-    EOS_TOKEN_ID = tokenizer.eos_token_id  # 1
-    VOCAB_SIZE = len(tokenizer.get_vocab())
+    # Init the T5 tokenizer
+    tokenizer = setup_tokenizer()
 
     def collate_fn(batch):
         docs = [item['document'] for item in batch]
@@ -82,8 +72,8 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
         # TODO: Pad manually cause this doesn't seem to work
 
         # create attention masks to ignore padding tokens
-        encoder_inputs["padding_mask"] = encoder_inputs["input_ids"].ne(PAD_TOKEN_ID)
-        decoder_inputs["padding_mask"] = decoder_inputs["input_ids"].ne(PAD_TOKEN_ID)
+        encoder_inputs["padding_mask"] = encoder_inputs["input_ids"].ne(tokenizer.pad_token_id)
+        decoder_inputs["padding_mask"] = decoder_inputs["input_ids"].ne(tokenizer.pad_token_id)
 
         return encoder_inputs.to(device), decoder_inputs.to(device)
 
@@ -109,9 +99,9 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
     #     print(f"First doc decoded: {first_doc_decoded}")
 
     if train:
-        model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), pos_enc, GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
+        model = Sumformer(device, emb_dim, len(tokenizer.get_vocab()), max(MAX_INPUT_LEN, max_out_len), pos_enc, GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
         optimizer = AdamW(model.parameters(), lr)
-        criterion = torch.nn.CrossEntropyLoss(ignore_index=PAD_TOKEN_ID if ignore_pad else -100, reduction='mean')  # * see without padding mask in decoder
+        criterion = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.pad_token_id if ignore_pad else -100, reduction='mean')  # * see without padding mask in decoder
         scheduler = init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim)
 
         for epoch in range(epochs):
@@ -122,29 +112,34 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
             print(f"Epoch {epoch+1}")
             for b_idx, (encoder_inputs, decoder_inputs) in enumerate(train_loader):
                 start_time = time.time()
-
-                # reset the gradients
+                
                 optimizer.zero_grad()
 
-                # forward pass  # ! NO SOURCE MASK IS BEING PASSED RIGHT NOW
-                train_outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"])
+                # gradually decrease teacher forcing
+                teacher_forcing_prob = 1.0 - (epoch / epochs)
+                teacher_forcing = random.random() < teacher_forcing_prob
 
-                # shift the decoder inputs to the right by 1 (for teacher forcing technique)  TODO: gradually decrease teacher forcing
-                s_logits = train_outputs[:, :-1, :].contiguous()
-                s_targets = decoder_inputs["input_ids"][:, 1:].contiguous()
+                if teacher_forcing:
+                    print("Training with teacher forcing...")
+                    train_outputs = model(source=encoder_inputs["input_ids"], target=decoder_inputs["input_ids"])
+                    train_logits = train_outputs[:, :-1, :].contiguous()  # shift the decoder inputs one to the right
+                else:
+                    print("Training without teacher forcing...")
+                    train_outputs, train_logits = model.greedy(encoder_inputs["input_ids"], start_token=tokenizer.bos_token_id, end_token=tokenizer.eos_token_id, max_len=max_out_len, logits=True)
+                
+                train_targets = decoder_inputs["input_ids"][:, 1:].contiguous()  # shift the targets one to the left
 
-                # compute the loss
-                loss = criterion(s_logits.view(-1, s_logits.size(-1)), s_targets.view(-1))
-                # loss = ((~decoder_inputs["attention_mask"].to(torch.float)) * loss).mean()
+                # Make the logits and targets same size in the sequence dimension
+                train_logits, train_targets = pad_sequences(train_logits, train_targets, pad_token=tokenizer.pad_token_id)
 
-                # backpropagate the loss
+                loss = criterion(train_logits.view(-1, train_logits.size(-1)), train_targets.view(-1))
+
                 loss.backward()
 
                 # clip the gradients if set
                 if clip > 0.0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), clip)
                 
-                # update the weights
                 optimizer.step()
 
                 # measure throughput
@@ -182,38 +177,25 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
             total_val_loss = 0.0
             with torch.no_grad():
                 for b_idx, (encoder_inputs, decoder_inputs) in enumerate(val_loader):
-                    outputs, logits = model.greedy(encoder_inputs["input_ids"], start_token=BOS_TOKEN_ID, end_token=EOS_TOKEN_ID, max_len=max_out_len, logits=True)
+                    val_outputs, val_logits = model.greedy(encoder_inputs["input_ids"], start_token=tokenizer.bos_token_id, end_token=tokenizer.eos_token_id, max_len=max_out_len, logits=True)
 
                     # Decode an example output
                     if b_idx == len(val_loader) - 1:
-                        example_output = tokenizer.decode(outputs[0], skip_special_tokens=True)
+                        example_input = tokenizer.decode(encoder_inputs["input_ids"][0], skip_special_tokens=True)
+                        example_target = tokenizer.decode(decoder_inputs["input_ids"][0], skip_special_tokens=True)
+                        example_output = tokenizer.decode(val_outputs[0], skip_special_tokens=True)
+                        print(f"Example input: {example_input}")
+                        print(f"Example target: {example_target}")
                         print(f"Example output: {example_output}")
 
-                    # s_hift to the right for teacher forcing
-                    s_logits = logits[:, :-1].contiguous()
-                    s_targets = decoder_inputs["input_ids"][:, 1:].contiguous()
+                    val_targets = decoder_inputs["input_ids"][:, 1:].contiguous()  # shift the targets one to the left
 
-                    # Get the sequence lengths
-                    seq_len_logits = s_logits.size(1)
-                    seq_len_targets = s_targets.size(1)
+                    # Make the logits and targets same size in the sequence dimension
+                    val_logits, val_targets = pad_sequences(val_logits, val_targets, pad_token=tokenizer.pad_token_id)
 
-                    # Determine the maximum sequence length and pad the shorter sequence
-                    max_seq_len = max(seq_len_logits, seq_len_targets)
-                    if seq_len_logits < max_seq_len:
-                        padding_size = max_seq_len - seq_len_logits
-                        s_logits = pad(s_logits, pad=(0, 0, 0, padding_size), value=PAD_TOKEN_ID)
-                    elif seq_len_targets < max_seq_len:
-                        padding_size = max_seq_len - seq_len_targets
-                        s_targets = pad(s_targets, pad=(0, padding_size), value=PAD_TOKEN_ID)
+                    loss = criterion(val_logits.view(-1, val_logits.size(-1)), val_targets.view(-1))
 
-                    # Compute the loss
-                    loss = criterion(s_logits.view(-1, s_logits.size(-1)), s_targets.view(-1))
-                    # loss = ((~decoder_inputs["attention_mask"].to(torch.float)) * loss).mean()
-                    
                     total_val_loss += loss.item()
-
-                    del s_logits, s_targets
-                    torch.cuda.empty_cache()
 
             # log the validation loss to wandb
             avg_val_loss = total_val_loss / len(val_loader)
@@ -246,7 +228,7 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
     if test:
         print("Testing...")
         if load is not None:  # TODO automatically load the correct params
-            test_model = Sumformer(device, emb_dim, VOCAB_SIZE, max(MAX_INPUT_LEN, max_out_len), pos_enc, GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
+            test_model = Sumformer(device, emb_dim, len(tokenizer.get_vocab()), max(MAX_INPUT_LEN, max_out_len), pos_enc, GLU, enc_heads, enc_hidden, enc_depth, enc_dropout, dec_heads, dec_hidden, dec_depth, dec_dropout).to(device)
             test_model.load_state_dict(torch.load(f"{load}"))
         else:
             try:
@@ -261,9 +243,9 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
             for b_idx, (encoder_inputs, decoder_inputs) in enumerate(test_loader):
                 if gen == "greedy":
                     test_outputs = test_model.greedy(
-                        encoder_inputs["input_ids"], start_token=BOS_TOKEN_ID, end_token=EOS_TOKEN_ID, max_len=max_out_len)
+                        encoder_inputs["input_ids"], start_token=tokenizer.bos_token_id, end_token=tokenizer.eos_token_id, max_len=max_out_len)
                 elif gen == "beam":  # ! DOESN'T WORK YET
-                    test_outputs = test_model.beam(encoder_inputs["input_ids"], start_token=BOS_TOKEN_ID, end_token=EOS_TOKEN_ID, max_len=max_out_len, source_mask=None)
+                    test_outputs = test_model.beam(encoder_inputs["input_ids"], start_token=tokenizer.bos_token_id, end_token=tokenizer.eos_token_id, max_len=max_out_len, source_mask=None)
                 else:
                      raise ValueError(f"{gen} is not a valid generation method")
                 generated_text = tokenizer.decode(test_outputs, skip_special_tokens=False)
@@ -278,6 +260,38 @@ def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="line
         wandb.log({"Test Loss": avg_test_loss})
     
     wandb.finish()
+
+
+def pad_sequences(seq1, seq2, pad_token):
+    seq1_len, seq2_len = seq1.size(1), seq2.size(1)
+
+    # Determine the maximum sequence length and pad the shorter sequence
+    max_seq_len = max(seq1_len, seq2_len)
+    if seq1_len < max_seq_len:
+        padding_size = max_seq_len - seq1_len
+        seq1 = pad(seq1, pad=(0, 0, 0, padding_size), value=pad_token)
+    elif seq2_len < max_seq_len:
+        padding_size = max_seq_len - seq2_len
+        seq2 = pad(seq2, pad=(0, padding_size), value=pad_token)
+
+    return seq1, seq2
+
+
+def setup_tokenizer():
+    tokenizer = T5Tokenizer.from_pretrained('t5-base', use_fast=True, model_max_length=MAX_INPUT_LEN)
+    tokenizer.bos_token = "<s>"
+    tokenizer.bos_token_id = tokenizer.convert_tokens_to_ids("<s>")
+    tokenizer.add_special_tokens({"bos_token": "<s>"})
+
+    return tokenizer
+
+
+def set_seed(seed):
+    torch.backends.cudnn.deterministic = True
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
 def load_n_sum(model_path, input_str, tokenizer, max_out_len):

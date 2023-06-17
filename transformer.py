@@ -64,34 +64,33 @@ class Sumformer(nn.Module):
     def greedy(self, source, start_token=0, end_token=1, max_len=256, source_mask=None, logits=False):
         self.eval()
         logit_list = []
-        with torch.no_grad():
-            # Encode the source sequence
-            context = self.encode(source, source_mask)
 
-            # Initialize the generated sequence with the start token
-            generated = torch.full((source.size(0), 1), start_token, dtype=torch.long, device=self.device)
-            
-            for _ in range(max_len):
-                output = self.decode(generated, context)
+        context = self.encode(source, source_mask)
 
-                next_token_logits = output[:, -1, :]  # (b, t, vocab_size) -> (b, 1, vocab_size) (take the last token of the sequence)
+        # Initialize the generated sequence with the start token
+        generated = torch.full((source.size(0), 1), start_token, dtype=torch.long, device=self.device)
+        
+        for _ in range(max_len):
+            output = self.decode(generated, context)
 
-                # Select the token with the highest probability
-                next_token = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
+            next_token_logits = output[:, -1, :]  # (b, t, vocab_size) -> (b, 1, vocab_size) (take the last token of the sequence)
 
-                # Concatenate the token to the sequence
-                generated = torch.cat((generated, next_token), dim=-1)
+            # Select the token with the highest probability
+            next_token = torch.argmax(next_token_logits, dim=-1).unsqueeze(-1)
 
-                logit_list.append(next_token_logits)
+            # Concatenate the token to the sequence
+            generated = torch.cat((generated, next_token), dim=-1)
 
-                # Stop if the end token is generated
-                if torch.eq(next_token, end_token).all():
-                    break
-            
-            if logits:
-                return generated, torch.stack(logit_list, dim=1)
-            else:
-                return generated
+            logit_list.append(next_token_logits)
+
+            # Stop if the end token is generated
+            if torch.eq(next_token, end_token).all():
+                break
+        
+        if logits:
+            return generated, torch.stack(logit_list, dim=1)
+        else:
+            return generated
 
 
     def beam(self, source, start_token=0, end_token=1, max_len=256, source_mask=None, num_beams=3, length_penalty=0.6):

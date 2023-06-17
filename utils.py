@@ -17,20 +17,17 @@ def create_data_loader(dataset, batch_size, collate_fn):
 def load_reddit(train_split, val_split, min_len=50):
     """Concatenate the short and long reddit TIFU datasets and split into train, validation, and test sets. Keep only the docs and their summary."""
     dataset_short = load_dataset("reddit_tifu", "short")
-    dataset_short = dataset_short.remove_columns(['ups', 'num_comments', 'upvote_ratio', 'score', 'tldr'])
-    dataset_short = dataset_short.rename_columns({'documents': 'document', 'title': 'summary'})
-
     dataset_long = load_dataset("reddit_tifu", "long")
-    dataset_long = dataset_long.remove_columns(['ups', 'num_comments', 'upvote_ratio', 'score', 'title'])
-    dataset_long = dataset_long.rename_columns({'documents': 'document', 'tldr': 'summary'})
-
     dataset = concatenate_datasets([dataset_short["train"], dataset_long["train"]])
+    dataset = dataset.rename_columns({'documents': 'document', 'tldr': 'summary'})
+    dataset = dataset.map(lambda x: {'document': x['title'] + " " + x['document'], 'summary': x['summary']})  # Concatenate the contents of the title column to the front of the documents column for every row
+    dataset = dataset.remove_columns(['ups', 'num_comments', 'upvote_ratio', 'score', 'title'])
 
     # Filtering out too short documents and summaries
     dataset = dataset.filter(lambda x:
                              len(x["document"]) > min_len
                              and len(x["summary"]) > min_len
-                             and len(x["document"]) > len(x["summary"]))
+                             and len(x["document"]) > 1.5 * len(x["summary"]))
 
     # Adding a the doc length of each instance
     dataset = dataset.map(lambda x: {'doc_len': len(x['document'])})
