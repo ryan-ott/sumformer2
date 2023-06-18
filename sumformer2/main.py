@@ -19,9 +19,9 @@ MIN_INPUT_LEN = 50
 MAX_INPUT_LEN = 256
 
 
-def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="warmup", emb_dim=512, max_out_len=30, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=False,
-         enc_heads=8, enc_hidden=6, enc_depth=8, enc_dropout=0.4,
-         dec_heads=8, dec_hidden=6, dec_depth=8, dec_dropout=0.4):
+def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="onecycle", emb_dim=512, max_out_len=30, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=False,
+         enc_heads=8, enc_hidden=6, enc_depth=8, enc_dropout=0.3,
+         dec_heads=8, dec_hidden=6, dec_depth=8, dec_dropout=0.3):
     # Ensure deterministic behavior
     set_seed(69420)
 
