@@ -1,11 +1,11 @@
 import math
 import os
+import torch
+import wandb
 
 from datasets import load_dataset, concatenate_datasets
-import torch
 from torch.optim import lr_scheduler
 from torch.utils.data import DataLoader, SequentialSampler, BatchSampler
-import wandb
 
 
 def create_data_loader(dataset, batch_size, collate_fn):
@@ -104,22 +104,6 @@ def init_schedule(optimizer, sched, train_loader, lr, epochs, emb_dim):
         raise ValueError("Invalid scheduler option provided.")
     return scheduler
 
-
-# def save_best_model(model, epoch, model_params):  # Artifact
-#     model_info = {
-#         'params': model_params,
-#         'state_dict': model.state_dict()
-#     }
-#     model_path = f"model_{wandb.run.name}_e{epoch}.pt"
-#     torch.save(model_info, model_path)
-
-#     # Create a new artifact
-#     artifact = wandb.Artifact(f"model_{wandb.run.name}_e{epoch}", type='model')
-#     artifact.add_file(model_path)
-#     wandb.log_artifact(artifact)
-
-#     # # Remove the file locally
-#     os.remove(model_path)
 
 def save_best_model(model, epoch, model_params):  # Local
     models_dir = os.path.join(os.path.dirname(__file__), "models", wandb.run.name)

@@ -10,8 +10,8 @@ from torch.nn.functional import pad
 from torch.optim import AdamW
 from transformers import T5Tokenizer
 
-from transformer import Sumformer
-from utils import *
+from .transformer import Sumformer
+from .utils import *
 
 
 INTERVAL = 100  # Init logging interval
@@ -19,7 +19,7 @@ MIN_INPUT_LEN = 50
 MAX_INPUT_LEN = 256
 
 
-def main(train=True, test=False, epochs=1, batch_size=8, lr=3.4e-4, sched="warmup", emb_dim=512, max_out_len=30, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=True,
+def main(train=True, test=False, epochs=1, batch_size=16, lr=3.4e-4, sched="warmup", emb_dim=512, max_out_len=30, clip=0.0, sample=None, load=None, pos_enc=False, GLU=False, gen="greedy", ignore_pad=False,
          enc_heads=8, enc_hidden=6, enc_depth=8, enc_dropout=0.4,
          dec_heads=8, dec_hidden=6, dec_depth=8, dec_dropout=0.4):
     # Ensure deterministic behavior
@@ -59,7 +59,12 @@ def main(train=True, test=False, epochs=1, batch_size=8, lr=3.4e-4, sched="warmu
     # Load dataset and prepare DataLoader
     # train_dataset, val_dataset, test_dataset = load_reddit(0.8, 0.1, min_len=MIN_INPUT_LEN)
     train_dataset, val_dataset, test_dataset = load_xsum()
-    print(len(train_dataset))
+    if sample is not None:
+        print(f"Sampling {sample} rows from dataset")
+        train_dataset = train_dataset.select(range(sample))
+        val_dataset = val_dataset.select(range(sample))
+        test_dataset = test_dataset.select(range(sample))
+    print("Number of rows: ", len(train_dataset))
 
     # Init the T5 tokenizer
     tokenizer = setup_tokenizer()
@@ -79,11 +84,6 @@ def main(train=True, test=False, epochs=1, batch_size=8, lr=3.4e-4, sched="warmu
         decoder_inputs["padding_mask"] = decoder_inputs["input_ids"].ne(tokenizer.pad_token_id)
 
         return encoder_inputs.to(device), decoder_inputs.to(device)
-
-    if sample is not None:
-        train_dataset = train_dataset.select(range(sample))
-        val_dataset = val_dataset.select(range(sample))
-        test_dataset = test_dataset.select(range(sample))
 
     train_loader = create_data_loader(train_dataset, batch_size, collate_fn)
     val_loader = create_data_loader(val_dataset, batch_size, collate_fn)
@@ -326,7 +326,11 @@ def load_n_sum(model_path, input_str, tokenizer, max_out_len):
     return tokenizer.decode(summary_ids[0], skip_special_tokens=True)
 
 
-if __name__ == '__main__':
-    fire.Fire(main)
+# if __name__ == '__main__':
+#     fire.Fire(main)
     # main(train=False, test=True, load="models/fearless-oath-237/model_fearless-oath-237_e0.pt")
     # main(batch_size=8, sample=48, max_out_len=32, enc_heads=2, dec_heads=4, test=True)
+
+
+def start():
+    fire.Fire(main)

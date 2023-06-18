@@ -4,7 +4,7 @@ import torch.nn as nn
 
 from torch.utils.checkpoint import checkpoint
 
-from modules import *
+from .modules import *
 
 class Sumformer(nn.Module):
     """Text summarization transformer."""
